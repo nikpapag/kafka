@@ -17,66 +17,32 @@
 
 package org.apache.kafka.image;
 
-import org.apache.kafka.raft.OffsetAndEpoch;
-import org.apache.kafka.server.common.ApiMessageAndVersion;
-
-import java.util.List;
-import java.util.Objects;
-import java.util.function.Consumer;
-import org.apache.kafka.server.common.MetadataVersion;
+import org.apache.kafka.image.node.MetadataImageNode;
+import org.apache.kafka.image.writer.ImageWriter;
+import org.apache.kafka.image.writer.ImageWriterOptions;
+import org.apache.kafka.server.common.OffsetAndEpoch;
 
 
 /**
  * The broker metadata image.
- *
+ * <p>
  * This class is thread-safe.
  */
-public final class MetadataImage {
-    public final static MetadataImage EMPTY = new MetadataImage(
-        new OffsetAndEpoch(0, 0),
+public record MetadataImage(MetadataProvenance provenance, FeaturesImage features, ClusterImage cluster,
+                            TopicsImage topics, ConfigurationsImage configs, ClientQuotasImage clientQuotas,
+                            ProducerIdsImage producerIds, AclsImage acls, ScramImage scram,
+                            DelegationTokenImage delegationTokens) {
+    public static final MetadataImage EMPTY = new MetadataImage(
+        MetadataProvenance.EMPTY,
         FeaturesImage.EMPTY,
         ClusterImage.EMPTY,
         TopicsImage.EMPTY,
         ConfigurationsImage.EMPTY,
         ClientQuotasImage.EMPTY,
         ProducerIdsImage.EMPTY,
-        AclsImage.EMPTY);
-
-    private final OffsetAndEpoch highestOffsetAndEpoch;
-
-    private final FeaturesImage features;
-
-    private final ClusterImage cluster;
-
-    private final TopicsImage topics;
-
-    private final ConfigurationsImage configs;
-
-    private final ClientQuotasImage clientQuotas;
-
-    private final ProducerIdsImage producerIds;
-
-    private final AclsImage acls;
-
-    public MetadataImage(
-        OffsetAndEpoch highestOffsetAndEpoch,
-        FeaturesImage features,
-        ClusterImage cluster,
-        TopicsImage topics,
-        ConfigurationsImage configs,
-        ClientQuotasImage clientQuotas,
-        ProducerIdsImage producerIds,
-        AclsImage acls
-    ) {
-        this.highestOffsetAndEpoch = highestOffsetAndEpoch;
-        this.features = features;
-        this.cluster = cluster;
-        this.topics = topics;
-        this.configs = configs;
-        this.clientQuotas = clientQuotas;
-        this.producerIds = producerIds;
-        this.acls = acls;
-    }
+        AclsImage.EMPTY,
+        ScramImage.EMPTY,
+        DelegationTokenImage.EMPTY);
 
     public boolean isEmpty() {
         return features.isEmpty() &&
@@ -85,90 +51,36 @@ public final class MetadataImage {
             configs.isEmpty() &&
             clientQuotas.isEmpty() &&
             producerIds.isEmpty() &&
-            acls.isEmpty();
+            acls.isEmpty() &&
+            scram.isEmpty() &&
+            delegationTokens.isEmpty();
     }
 
     public OffsetAndEpoch highestOffsetAndEpoch() {
-        return highestOffsetAndEpoch;
+        return new OffsetAndEpoch(provenance.lastContainedOffset(), provenance.lastContainedEpoch());
     }
 
-    public FeaturesImage features() {
-        return features;
+    public long offset() {
+        return provenance.lastContainedOffset();
     }
 
-    public ClusterImage cluster() {
-        return cluster;
-    }
-
-    public TopicsImage topics() {
-        return topics;
-    }
-
-    public ConfigurationsImage configs() {
-        return configs;
-    }
-
-    public ClientQuotasImage clientQuotas() {
-        return clientQuotas;
-    }
-
-    public ProducerIdsImage producerIds() {
-        return producerIds;
-    }
-
-    public AclsImage acls() {
-        return acls;
-    }
-
-    public void write(Consumer<List<ApiMessageAndVersion>> out) {
-        MetadataVersion metadataVersion = features.metadataVersion();
+    public void write(ImageWriter writer, ImageWriterOptions options) {
         // Features should be written out first so we can include the metadata.version at the beginning of the
         // snapshot
-        features.write(out);
-        cluster.write(out, metadataVersion);
-        topics.write(out);
-        configs.write(out);
-        clientQuotas.write(out);
-        producerIds.write(out);
-        acls.write(out);
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (!(o instanceof MetadataImage)) return false;
-        MetadataImage other = (MetadataImage) o;
-        return highestOffsetAndEpoch.equals(other.highestOffsetAndEpoch) &&
-            features.equals(other.features) &&
-            cluster.equals(other.cluster) &&
-            topics.equals(other.topics) &&
-            configs.equals(other.configs) &&
-            clientQuotas.equals(other.clientQuotas) &&
-            producerIds.equals(other.producerIds) &&
-            acls.equals(other.acls);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(highestOffsetAndEpoch,
-            features,
-            cluster,
-            topics,
-            configs,
-            clientQuotas,
-            producerIds,
-            acls);
+        features.write(writer, options);
+        cluster.write(writer, options);
+        topics.write(writer, options);
+        configs.write(writer);
+        clientQuotas.write(writer);
+        producerIds.write(writer);
+        acls.write(writer);
+        scram.write(writer, options);
+        delegationTokens.write(writer, options);
+        writer.close(true);
     }
 
     @Override
     public String toString() {
-        return "MetadataImage(highestOffsetAndEpoch=" + highestOffsetAndEpoch +
-            ", features=" + features +
-            ", cluster=" + cluster +
-            ", topics=" + topics +
-            ", configs=" + configs +
-            ", clientQuotas=" + clientQuotas +
-            ", producerIdsImage=" + producerIds +
-            ", acls=" + acls +
-            ")";
+        return new MetadataImageNode(this).stringify();
     }
 }

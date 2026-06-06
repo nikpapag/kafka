@@ -22,20 +22,31 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
-import org.apache.kafka.common.message.AlterPartitionRequestData;
-import org.apache.kafka.common.message.AlterPartitionResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData;
+import org.apache.kafka.common.message.AlterPartitionRequestData;
+import org.apache.kafka.common.message.AlterPartitionResponseData;
+import org.apache.kafka.common.message.AlterUserScramCredentialsRequestData;
+import org.apache.kafka.common.message.AlterUserScramCredentialsResponseData;
+import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
+import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
+import org.apache.kafka.common.message.ControllerRegistrationRequestData;
+import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
+import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
+import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
+import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
+import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
+import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
@@ -68,18 +79,72 @@ public interface Controller extends AclMutator, AutoCloseable {
     );
 
     /**
+     * Alter the user SCRAM credentials.
+     *
+     * @param context       The controller request context.
+     * @param request       The AlterUserScramCredentialsRequest data.
+     *
+     * @return              A future yielding the response.
+     */
+    CompletableFuture<AlterUserScramCredentialsResponseData> alterUserScramCredentials(
+        ControllerRequestContext context,
+        AlterUserScramCredentialsRequestData request
+    );
+
+    /**
+     * Create a DelegationToken for a specified user.
+     *
+     * @param context       The controller request context.
+     * @param request       The CreateDelegationTokenRequest data.
+     *
+     * @return              A future yielding the response.
+     */
+    CompletableFuture<CreateDelegationTokenResponseData> createDelegationToken(
+        ControllerRequestContext context,
+        CreateDelegationTokenRequestData request
+    );
+
+    /**
+     * Renew an existing DelegationToken for a specific TokenID.
+     *
+     * @param context       The controller request context.
+     * @param request       The RenewDelegationTokenRequest data.
+     *
+     * @return              A future yielding the response.
+     */
+    CompletableFuture<RenewDelegationTokenResponseData> renewDelegationToken(
+        ControllerRequestContext context,
+        RenewDelegationTokenRequestData request
+    );
+
+    /**
+     * Expire an existing DelegationToken for a specific TokenID.
+     *
+     * @param context       The controller request context.
+     * @param request       The ExpireDelegationTokenRequest data.
+     *
+     * @return              A future yielding the response.
+     */
+    CompletableFuture<ExpireDelegationTokenResponseData> expireDelegationToken(
+        ControllerRequestContext context,
+        ExpireDelegationTokenRequestData request
+    );
+
+    /**
      * Create a batch of topics.
      *
      * @param context       The controller request context.
      * @param request       The CreateTopicsRequest data.
      * @param describable   The topics which we have DESCRIBE permission on.
+     * @param forwarded     True if the request was forwarded.
      *
      * @return              A future yielding the response.
      */
     CompletableFuture<CreateTopicsResponseData> createTopics(
         ControllerRequestContext context,
         CreateTopicsRequestData request,
-        Set<String> describable
+        Set<String> describable,
+        boolean forwarded
     );
 
     /**
@@ -189,13 +254,15 @@ public interface Controller extends AclMutator, AutoCloseable {
      * @param context       The controller request context.
      * @param configChanges The changes.
      * @param validateOnly  True if we should validate the changes but not apply them.
+     * @param forwarded     True if the request was forwarded.
      *
      * @return              A future yielding a map from config resources to error results.
      */
     CompletableFuture<Map<ConfigResource, ApiError>> incrementalAlterConfigs(
         ControllerRequestContext context,
         Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges,
-        boolean validateOnly
+        boolean validateOnly,
+        boolean forwarded
     );
 
     /**
@@ -230,13 +297,15 @@ public interface Controller extends AclMutator, AutoCloseable {
      * @param context       The controller request context.
      * @param newConfigs    The new configuration maps to apply.
      * @param validateOnly  True if we should validate the changes but not apply them.
+     * @param forwarded     True if the request was forwarded.
      *
      * @return              A future yielding a map from config resources to error results.
      */
     CompletableFuture<Map<ConfigResource, ApiError>> legacyAlterConfigs(
         ControllerRequestContext context,
         Map<ConfigResource, Map<String, String>> newConfigs,
-        boolean validateOnly
+        boolean validateOnly,
+        boolean forwarded
     );
 
     /**
@@ -317,14 +386,6 @@ public interface Controller extends AclMutator, AutoCloseable {
     );
 
     /**
-     * Begin writing a controller snapshot.  If there was already an ongoing snapshot, it
-     * simply returns information about that snapshot rather than starting a new one.
-     *
-     * @return              A future yielding the epoch of the snapshot.
-     */
-    CompletableFuture<Long> beginWritingSnapshot();
-
-    /**
      * Create partitions on certain topics.
      *
      * @param topics        The list of topics to create partitions for.
@@ -336,6 +397,32 @@ public interface Controller extends AclMutator, AutoCloseable {
         ControllerRequestContext context,
         List<CreatePartitionsTopic> topics,
         boolean validateOnly
+    );
+
+    /**
+     * Attempt to register the given controller.
+     *
+     * @param context       The controller request context.
+     * @param request       The registration request.
+     *
+     * @return              A future yielding the broker registration reply.
+     */
+    CompletableFuture<Void> registerController(
+        ControllerRequestContext context,
+        ControllerRegistrationRequestData request
+    );
+
+    /**
+     * Assign replicas to directories.
+     *
+     * @param context       The controller request context.
+     * @param request       The assign replicas to dirs request.
+     *
+     * @return              A future yielding the results.
+     */
+    CompletableFuture<AssignReplicasToDirsResponseData> assignReplicasToDirs(
+        ControllerRequestContext context,
+        AssignReplicasToDirsRequestData request
     );
 
     /**

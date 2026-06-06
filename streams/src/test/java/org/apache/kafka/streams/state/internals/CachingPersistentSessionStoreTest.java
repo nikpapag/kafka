@@ -16,14 +16,15 @@
  */
 package org.apache.kafka.streams.state.internals;
 
+import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.serialization.Deserializer;
-import org.apache.kafka.common.serialization.Serdes;
+import org.apache.kafka.common.serialization.IntegerSerializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.common.utils.LogCaptureAppender;
-import org.apache.kafka.common.utils.LogContext;
+import org.apache.kafka.common.utils.internals.LogContext;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.KeyValueTimestamp;
 import org.apache.kafka.streams.errors.InvalidStateStoreException;
@@ -31,43 +32,55 @@ import org.apache.kafka.streams.kstream.SessionWindowedDeserializer;
 import org.apache.kafka.streams.kstream.Windowed;
 import org.apache.kafka.streams.kstream.internals.Change;
 import org.apache.kafka.streams.kstream.internals.SessionWindow;
-import org.apache.kafka.streams.processor.StateStoreContext;
 import org.apache.kafka.streams.processor.api.Record;
 import org.apache.kafka.streams.processor.internals.MockStreamsMetrics;
 import org.apache.kafka.streams.processor.internals.ProcessorRecordContext;
 import org.apache.kafka.streams.query.Position;
 import org.apache.kafka.streams.state.KeyValueIterator;
+import org.apache.kafka.streams.state.ReadOnlySessionStore;
 import org.apache.kafka.streams.state.SessionStore;
 import org.apache.kafka.test.InternalMockProcessorContext;
 import org.apache.kafka.test.TestUtils;
-import org.easymock.EasyMock;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
 import static java.util.Arrays.asList;
 import static org.apache.kafka.common.utils.Utils.mkEntry;
 import static org.apache.kafka.common.utils.Utils.mkMap;
-import static org.apache.kafka.test.StreamsTestUtils.toList;
+import static org.apache.kafka.test.StreamsTestUtils.toListAndCloseIterator;
 import static org.apache.kafka.test.StreamsTestUtils.verifyKeyValueList;
 import static org.apache.kafka.test.StreamsTestUtils.verifyWindowedKeyValue;
 import static org.hamcrest.CoreMatchers.hasItem;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThrows;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.STRICT_STUBS)
 public class CachingPersistentSessionStoreTest {
 
     private static final int MAX_CACHE_SIZE_BYTES = 600;
@@ -83,9 +96,9 @@ public class CachingPersistentSessionStoreTest {
     private SessionStore<Bytes, byte[]> underlyingStore;
     private CachingSessionStore cachingStore;
     private ThreadCache cache;
-    private InternalMockProcessorContext<Object, Object> context;
+    private InternalMockProcessorContext<?, ?> context;
 
-    @Before
+    @BeforeEach
     public void before() {
         final RocksDBSegmentedBytesStore segmented = new RocksDBSegmentedBytesStore(
             "store-name",
@@ -100,10 +113,10 @@ public class CachingPersistentSessionStoreTest {
         this.context =
             new InternalMockProcessorContext<>(TestUtils.tempDirectory(), null, null, null, cache);
         context.setRecordContext(new ProcessorRecordContext(DEFAULT_TIMESTAMP, 0, 0, TOPIC, new RecordHeaders()));
-        cachingStore.init((StateStoreContext) context, cachingStore);
+        cachingStore.init(context, cachingStore);
     }
 
-    @After
+    @AfterEach
     public void after() {
         cachingStore.close();
     }
@@ -155,7 +168,7 @@ public class CachingPersistentSessionStoreTest {
         assertEquals(Position.emptyPosition(), cachingStore.getPosition());
         assertEquals(Position.emptyPosition(), underlyingStore.getPosition());
 
-        cachingStore.flush();
+        cachingStore.commit(Map.of());
 
         assertEquals(
             Position.fromMap(mkMap(mkEntry("", mkMap(mkEntry(0, 2L))))),
@@ -258,62 +271,47 @@ public class CachingPersistentSessionStoreTest {
     @Test
     public void shouldCloseWrappedStoreAndCacheAfterErrorDuringCacheFlush() {
         setUpCloseTests();
-        EasyMock.reset(cache);
-        cache.flush(CACHE_NAMESPACE);
-        EasyMock.expectLastCall().andThrow(new RuntimeException("Simulating an error on flush"));
-        EasyMock.replay(cache);
-        EasyMock.reset(underlyingStore);
-        underlyingStore.close();
-        EasyMock.replay(underlyingStore);
+        final InOrder inOrder = inOrder(cache, underlyingStore);
+        doThrow(new RuntimeException("Simulating an error on flush")).doNothing().when(cache).flush(CACHE_NAMESPACE);
 
         assertThrows(RuntimeException.class, cachingStore::close);
-        EasyMock.verify(cache, underlyingStore);
+        inOrder.verify(cache).close(CACHE_NAMESPACE);
+        inOrder.verify(underlyingStore).close();
     }
 
     @Test
     public void shouldCloseWrappedStoreAfterErrorDuringCacheClose() {
         setUpCloseTests();
-        EasyMock.reset(cache);
-        cache.flush(CACHE_NAMESPACE);
-        cache.close(CACHE_NAMESPACE);
-        EasyMock.expectLastCall().andThrow(new RuntimeException("Simulating an error on close"));
-        EasyMock.replay(cache);
-        EasyMock.reset(underlyingStore);
-        underlyingStore.close();
-        EasyMock.replay(underlyingStore);
+        final InOrder inOrder = inOrder(cache, underlyingStore);
+        doThrow(new RuntimeException("Simulating an error on close")).doNothing().when(cache).close(CACHE_NAMESPACE);
 
         assertThrows(RuntimeException.class, cachingStore::close);
-        EasyMock.verify(cache, underlyingStore);
+        inOrder.verify(cache).flush(CACHE_NAMESPACE);
+        inOrder.verify(underlyingStore).close();
     }
 
     @Test
     public void shouldCloseCacheAfterErrorDuringWrappedStoreClose() {
         setUpCloseTests();
-        EasyMock.reset(cache);
-        cache.flush(CACHE_NAMESPACE);
-        cache.close(CACHE_NAMESPACE);
-        EasyMock.replay(cache);
-        EasyMock.reset(underlyingStore);
-        underlyingStore.close();
-        EasyMock.expectLastCall().andThrow(new RuntimeException("Simulating an error on close"));
-        EasyMock.replay(underlyingStore);
+        final InOrder inOrder = inOrder(cache);
+        doThrow(new RuntimeException("Simulating an error on close")).doNothing().when(underlyingStore).close();
 
         assertThrows(RuntimeException.class, cachingStore::close);
-        EasyMock.verify(cache, underlyingStore);
+        inOrder.verify(cache).flush(CACHE_NAMESPACE);
+        inOrder.verify(cache).close(CACHE_NAMESPACE);
     }
 
+    @SuppressWarnings("unchecked")
     private void setUpCloseTests() {
         underlyingStore.close();
-        underlyingStore = EasyMock.createNiceMock(SessionStore.class);
-        EasyMock.expect(underlyingStore.name()).andStubReturn("store-name");
-        EasyMock.expect(underlyingStore.isOpen()).andStubReturn(true);
-        EasyMock.replay(underlyingStore);
+        underlyingStore = mock(SessionStore.class);
+        when(underlyingStore.name()).thenReturn("store-name");
         cachingStore = new CachingSessionStore(underlyingStore, SEGMENT_INTERVAL);
-        cache = EasyMock.niceMock(ThreadCache.class);
-        final InternalMockProcessorContext context =
+        cache = mock(ThreadCache.class);
+        final InternalMockProcessorContext<?, ?> context =
             new InternalMockProcessorContext<>(TestUtils.tempDirectory(), null, null, null, cache);
         context.setRecordContext(new ProcessorRecordContext(10, 0, 0, TOPIC, new RecordHeaders()));
-        cachingStore.init((StateStoreContext) context, cachingStore);
+        cachingStore.init(context, cachingStore);
     }
 
     @Test
@@ -413,7 +411,7 @@ public class CachingPersistentSessionStoreTest {
         // add one that shouldn't appear in the results
         cachingStore.put(new Windowed<>(keyAA, new SessionWindow(0, 0)), "5".getBytes());
 
-        final List<KeyValue<Windowed<Bytes>, byte[]>> results = toList(cachingStore.fetch(keyA));
+        final List<KeyValue<Windowed<Bytes>, byte[]>> results = toListAndCloseIterator(cachingStore.fetch(keyA));
         verifyKeyValueList(expected, results);
     }
 
@@ -432,7 +430,7 @@ public class CachingPersistentSessionStoreTest {
         // add one that shouldn't appear in the results
         cachingStore.put(new Windowed<>(keyAA, new SessionWindow(0, 0)), "5".getBytes());
 
-        final List<KeyValue<Windowed<Bytes>, byte[]>> results = toList(cachingStore.backwardFetch(keyA));
+        final List<KeyValue<Windowed<Bytes>, byte[]>> results = toListAndCloseIterator(cachingStore.backwardFetch(keyA));
         Collections.reverse(results);
         verifyKeyValueList(expected, results);
     }
@@ -452,7 +450,7 @@ public class CachingPersistentSessionStoreTest {
     @Test
     public void shouldQueryItemsInCacheAndStore() {
         final List<KeyValue<Windowed<Bytes>, byte[]>> added = addSessionsUntilOverflow("a");
-        final List<KeyValue<Windowed<Bytes>, byte[]>> actual = toList(cachingStore.findSessions(
+        final List<KeyValue<Windowed<Bytes>, byte[]>> actual = toListAndCloseIterator(cachingStore.findSessions(
                 Bytes.wrap("a".getBytes(StandardCharsets.UTF_8)),
                 0,
                 added.size() * 10L
@@ -480,8 +478,8 @@ public class CachingPersistentSessionStoreTest {
 
     @Test
     public void shouldFetchCorrectlyAcrossSegments() {
-        final Windowed<Bytes> a1 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 0, SEGMENT_INTERVAL * 0));
-        final Windowed<Bytes> a2 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 1, SEGMENT_INTERVAL * 1));
+        final Windowed<Bytes> a1 = new Windowed<>(keyA, new SessionWindow(0, 0));
+        final Windowed<Bytes> a2 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL, SEGMENT_INTERVAL));
         final Windowed<Bytes> a3 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 2, SEGMENT_INTERVAL * 2));
         final Windowed<Bytes> a4 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 3, SEGMENT_INTERVAL * 3));
         final Windowed<Bytes> a5 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 4, SEGMENT_INTERVAL * 4));
@@ -489,7 +487,7 @@ public class CachingPersistentSessionStoreTest {
         cachingStore.put(a1, "1".getBytes());
         cachingStore.put(a2, "2".getBytes());
         cachingStore.put(a3, "3".getBytes());
-        cachingStore.flush();
+        cachingStore.commit(Map.of());
         cachingStore.put(a4, "4".getBytes());
         cachingStore.put(a5, "5".getBytes());
         cachingStore.put(a6, "6".getBytes());
@@ -507,8 +505,8 @@ public class CachingPersistentSessionStoreTest {
 
     @Test
     public void shouldBackwardFetchCorrectlyAcrossSegments() {
-        final Windowed<Bytes> a1 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 0, SEGMENT_INTERVAL * 0));
-        final Windowed<Bytes> a2 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 1, SEGMENT_INTERVAL * 1));
+        final Windowed<Bytes> a1 = new Windowed<>(keyA, new SessionWindow(0, 0));
+        final Windowed<Bytes> a2 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL, SEGMENT_INTERVAL));
         final Windowed<Bytes> a3 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 2, SEGMENT_INTERVAL * 2));
         final Windowed<Bytes> a4 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 3, SEGMENT_INTERVAL * 3));
         final Windowed<Bytes> a5 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 4, SEGMENT_INTERVAL * 4));
@@ -516,7 +514,7 @@ public class CachingPersistentSessionStoreTest {
         cachingStore.put(a1, "1".getBytes());
         cachingStore.put(a2, "2".getBytes());
         cachingStore.put(a3, "3".getBytes());
-        cachingStore.flush();
+        cachingStore.commit(Map.of());
         cachingStore.put(a4, "4".getBytes());
         cachingStore.put(a5, "5".getBytes());
         cachingStore.put(a6, "6".getBytes());
@@ -534,9 +532,9 @@ public class CachingPersistentSessionStoreTest {
 
     @Test
     public void shouldFetchRangeCorrectlyAcrossSegments() {
-        final Windowed<Bytes> a1 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 0, SEGMENT_INTERVAL * 0));
-        final Windowed<Bytes> aa1 = new Windowed<>(keyAA, new SessionWindow(SEGMENT_INTERVAL * 0, SEGMENT_INTERVAL * 0));
-        final Windowed<Bytes> a2 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 1, SEGMENT_INTERVAL * 1));
+        final Windowed<Bytes> a1 = new Windowed<>(keyA, new SessionWindow(0, 0));
+        final Windowed<Bytes> aa1 = new Windowed<>(keyAA, new SessionWindow(0, 0));
+        final Windowed<Bytes> a2 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL, SEGMENT_INTERVAL));
         final Windowed<Bytes> a3 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 2, SEGMENT_INTERVAL * 2));
         final Windowed<Bytes> aa3 = new Windowed<>(keyAA, new SessionWindow(SEGMENT_INTERVAL * 2, SEGMENT_INTERVAL * 2));
         cachingStore.put(a1, "1".getBytes());
@@ -557,9 +555,9 @@ public class CachingPersistentSessionStoreTest {
 
     @Test
     public void shouldBackwardFetchRangeCorrectlyAcrossSegments() {
-        final Windowed<Bytes> a1 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 0, SEGMENT_INTERVAL * 0));
-        final Windowed<Bytes> aa1 = new Windowed<>(keyAA, new SessionWindow(SEGMENT_INTERVAL * 0, SEGMENT_INTERVAL * 0));
-        final Windowed<Bytes> a2 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 1, SEGMENT_INTERVAL * 1));
+        final Windowed<Bytes> a1 = new Windowed<>(keyA, new SessionWindow(0, 0));
+        final Windowed<Bytes> aa1 = new Windowed<>(keyAA, new SessionWindow(0, 0));
+        final Windowed<Bytes> a2 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL, SEGMENT_INTERVAL));
         final Windowed<Bytes> a3 = new Windowed<>(keyA, new SessionWindow(SEGMENT_INTERVAL * 2, SEGMENT_INTERVAL * 2));
         final Windowed<Bytes> aa3 = new Windowed<>(keyAA, new SessionWindow(SEGMENT_INTERVAL * 2, SEGMENT_INTERVAL * 2));
         cachingStore.put(a1, "1".getBytes());
@@ -598,7 +596,7 @@ public class CachingPersistentSessionStoreTest {
         cachingStore.setFlushListener(flushListener, true);
 
         cachingStore.put(b, "1".getBytes());
-        cachingStore.flush();
+        cachingStore.commit(Map.of());
 
         assertEquals(
             Collections.singletonList(
@@ -613,7 +611,7 @@ public class CachingPersistentSessionStoreTest {
         flushListener.forwarded.clear();
 
         cachingStore.put(a, "1".getBytes());
-        cachingStore.flush();
+        cachingStore.commit(Map.of());
 
         assertEquals(
             Collections.singletonList(
@@ -628,7 +626,7 @@ public class CachingPersistentSessionStoreTest {
         flushListener.forwarded.clear();
 
         cachingStore.put(a, "2".getBytes());
-        cachingStore.flush();
+        cachingStore.commit(Map.of());
 
         assertEquals(
             Collections.singletonList(
@@ -643,7 +641,7 @@ public class CachingPersistentSessionStoreTest {
         flushListener.forwarded.clear();
 
         cachingStore.remove(a);
-        cachingStore.flush();
+        cachingStore.commit(Map.of());
 
         assertEquals(
             Collections.singletonList(
@@ -660,7 +658,7 @@ public class CachingPersistentSessionStoreTest {
         cachingStore.put(a, "1".getBytes());
         cachingStore.put(a, "2".getBytes());
         cachingStore.remove(a);
-        cachingStore.flush();
+        cachingStore.commit(Map.of());
 
         assertEquals(
             Collections.emptyList(),
@@ -680,13 +678,13 @@ public class CachingPersistentSessionStoreTest {
         cachingStore.setFlushListener(flushListener, false);
 
         cachingStore.put(a, "1".getBytes());
-        cachingStore.flush();
+        cachingStore.commit(Map.of());
 
         cachingStore.put(a, "2".getBytes());
-        cachingStore.flush();
+        cachingStore.commit(Map.of());
 
         cachingStore.remove(a);
-        cachingStore.flush();
+        cachingStore.commit(Map.of());
 
         assertEquals(
             asList(
@@ -713,7 +711,7 @@ public class CachingPersistentSessionStoreTest {
         cachingStore.put(a, "1".getBytes());
         cachingStore.put(a, "2".getBytes());
         cachingStore.remove(a);
-        cachingStore.flush();
+        cachingStore.commit(Map.of());
 
         assertEquals(
             Collections.emptyList(),
@@ -769,12 +767,14 @@ public class CachingPersistentSessionStoreTest {
         assertEquals(0, cache.size());
     }
 
+    @SuppressWarnings("resource")
     @Test
     public void shouldThrowIfTryingToFetchFromClosedCachingStore() {
         cachingStore.close();
         assertThrows(InvalidStateStoreException.class, () -> cachingStore.fetch(keyA));
     }
 
+    @SuppressWarnings("resource")
     @Test
     public void shouldThrowIfTryingToFindMergeSessionFromClosedCachingStore() {
         cachingStore.close();
@@ -793,11 +793,13 @@ public class CachingPersistentSessionStoreTest {
         assertThrows(InvalidStateStoreException.class, () -> cachingStore.put(new Windowed<>(keyA, new SessionWindow(0, 0)), "1".getBytes()));
     }
 
+    @SuppressWarnings("resource")
     @Test
     public void shouldThrowNullPointerExceptionOnFindSessionsNullKey() {
         assertThrows(NullPointerException.class, () -> cachingStore.findSessions(null, 1L, 2L));
     }
 
+    @SuppressWarnings("resource")
     @Test
     public void shouldThrowNullPointerExceptionOnFetchNullKey() {
         assertThrows(NullPointerException.class, () -> cachingStore.fetch(null));
@@ -813,10 +815,11 @@ public class CachingPersistentSessionStoreTest {
         assertThrows(NullPointerException.class, () -> cachingStore.put(null, "1".getBytes()));
     }
 
+    @SuppressWarnings("resource")
     @Test
     public void shouldNotThrowInvalidRangeExceptionWhenBackwardWithNegativeFromKey() {
-        final Bytes keyFrom = Bytes.wrap(Serdes.Integer().serializer().serialize("", -1));
-        final Bytes keyTo = Bytes.wrap(Serdes.Integer().serializer().serialize("", 1));
+        final Bytes keyFrom = Bytes.wrap(new IntegerSerializer().serialize("", -1));
+        final Bytes keyTo = Bytes.wrap(new IntegerSerializer().serialize("", 1));
 
         try (final LogCaptureAppender appender = LogCaptureAppender.createAndRegister(CachingSessionStore.class);
              final KeyValueIterator<Windowed<Bytes>, byte[]> iterator =
@@ -836,10 +839,11 @@ public class CachingPersistentSessionStoreTest {
         }
     }
 
+    @SuppressWarnings("resource")
     @Test
     public void shouldNotThrowInvalidRangeExceptionWithNegativeFromKey() {
-        final Bytes keyFrom = Bytes.wrap(Serdes.Integer().serializer().serialize("", -1));
-        final Bytes keyTo = Bytes.wrap(Serdes.Integer().serializer().serialize("", 1));
+        final Bytes keyFrom = Bytes.wrap(new IntegerSerializer().serialize("", -1));
+        final Bytes keyTo = Bytes.wrap(new IntegerSerializer().serialize("", 1));
 
         try (final LogCaptureAppender appender = LogCaptureAppender.createAndRegister(CachingSessionStore.class);
              final KeyValueIterator<Windowed<Bytes>, byte[]> iterator = cachingStore.findSessions(keyFrom, keyTo, 0L, 10L)) {
@@ -856,6 +860,173 @@ public class CachingPersistentSessionStoreTest {
                 )
             );
         }
+    }
+
+    @Test
+    public void shouldReadCommittedBypassesCache() {
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(0, 0)), "1".getBytes());
+
+        // cache-only entry is invisible under READ_COMMITTED
+        try (final KeyValueIterator<Windowed<Bytes>, byte[]> it =
+                 cachingStore.readOnly(IsolationLevel.READ_COMMITTED).findSessions(keyA, 0, 0)) {
+            assertFalse(it.hasNext());
+        }
+
+        cachingStore.commit(Map.of());
+
+        // once flushed to store it is visible
+        try (final KeyValueIterator<Windowed<Bytes>, byte[]> it =
+                 cachingStore.readOnly(IsolationLevel.READ_COMMITTED).findSessions(keyA, 0, 0)) {
+            assertTrue(it.hasNext());
+        }
+    }
+
+    @Test
+    public void shouldReadUncommittedViewFetchSession() {
+        // keyA in store, keyB in cache
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(0, 0)), "store".getBytes());
+        cachingStore.commit(Map.of());
+        cachingStore.put(new Windowed<>(keyB, new SessionWindow(0, 0)), "cache".getBytes());
+
+        final ReadOnlySessionStore<Bytes, byte[]> view = cachingStore.readOnly(IsolationLevel.READ_UNCOMMITTED);
+        assertArrayEquals("store".getBytes(), view.fetchSession(keyA, 0, 0));
+        assertArrayEquals("cache".getBytes(), view.fetchSession(keyB, 0, 0));
+    }
+
+    @Test
+    public void shouldReadUncommittedViewFindSessionsMergesCacheAndStore() {
+        // keyA window(0,0) in store; keyA window(10,10) in cache
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(0, 0)), "1".getBytes());
+        cachingStore.commit(Map.of());
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(10, 10)), "2".getBytes());
+
+        final ReadOnlySessionStore<Bytes, byte[]> view = cachingStore.readOnly(IsolationLevel.READ_UNCOMMITTED);
+        final List<KeyValue<Windowed<Bytes>, byte[]>> results =
+            toListAndCloseIterator(view.findSessions(keyA, 0, 10));
+        assertEquals(2, results.size());
+        verifyWindowedKeyValue(results.get(0), new Windowed<>(keyA, new SessionWindow(0, 0)), "1");
+        verifyWindowedKeyValue(results.get(1), new Windowed<>(keyA, new SessionWindow(10, 10)), "2");
+    }
+
+    @Test
+    public void shouldReadUncommittedViewBackwardFindSessionsMergesCacheAndStore() {
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(0, 0)), "1".getBytes());
+        cachingStore.commit(Map.of());
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(10, 10)), "2".getBytes());
+
+        final ReadOnlySessionStore<Bytes, byte[]> view = cachingStore.readOnly(IsolationLevel.READ_UNCOMMITTED);
+        final List<KeyValue<Windowed<Bytes>, byte[]>> results =
+            toListAndCloseIterator(view.backwardFindSessions(keyA, 0, 10));
+        assertEquals(2, results.size());
+        verifyWindowedKeyValue(results.get(0), new Windowed<>(keyA, new SessionWindow(10, 10)), "2");
+        verifyWindowedKeyValue(results.get(1), new Windowed<>(keyA, new SessionWindow(0, 0)), "1");
+    }
+
+    @Test
+    public void shouldReadUncommittedViewFindSessionsRangeMergesCacheAndStore() {
+        // keyA in store, keyB in cache
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(0, 0)), "1".getBytes());
+        cachingStore.commit(Map.of());
+        cachingStore.put(new Windowed<>(keyB, new SessionWindow(0, 0)), "2".getBytes());
+
+        final ReadOnlySessionStore<Bytes, byte[]> view = cachingStore.readOnly(IsolationLevel.READ_UNCOMMITTED);
+        final List<KeyValue<Windowed<Bytes>, byte[]>> results =
+            toListAndCloseIterator(view.findSessions(keyA, keyB, 0, 0));
+        assertEquals(2, results.size());
+        verifyWindowedKeyValue(results.get(0), new Windowed<>(keyA, new SessionWindow(0, 0)), "1");
+        verifyWindowedKeyValue(results.get(1), new Windowed<>(keyB, new SessionWindow(0, 0)), "2");
+    }
+
+    @Test
+    public void shouldReadUncommittedViewBackwardFindSessionsRangeMergesCacheAndStore() {
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(0, 0)), "1".getBytes());
+        cachingStore.commit(Map.of());
+        cachingStore.put(new Windowed<>(keyB, new SessionWindow(0, 0)), "2".getBytes());
+
+        final ReadOnlySessionStore<Bytes, byte[]> view = cachingStore.readOnly(IsolationLevel.READ_UNCOMMITTED);
+        final List<KeyValue<Windowed<Bytes>, byte[]>> results =
+            toListAndCloseIterator(view.backwardFindSessions(keyA, keyB, 0, 0));
+        assertEquals(2, results.size());
+        verifyWindowedKeyValue(results.get(0), new Windowed<>(keyB, new SessionWindow(0, 0)), "2");
+        verifyWindowedKeyValue(results.get(1), new Windowed<>(keyA, new SessionWindow(0, 0)), "1");
+    }
+
+    @Test
+    public void shouldReadUncommittedViewFetchSingleKeyMergesCacheAndStore() {
+        // keyA window(0,0) in store; keyA window(10,10) in cache
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(0, 0)), "1".getBytes());
+        cachingStore.commit(Map.of());
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(10, 10)), "2".getBytes());
+
+        final ReadOnlySessionStore<Bytes, byte[]> view = cachingStore.readOnly(IsolationLevel.READ_UNCOMMITTED);
+        final List<KeyValue<Windowed<Bytes>, byte[]>> results = toListAndCloseIterator(view.fetch(keyA));
+        assertEquals(2, results.size());
+        verifyWindowedKeyValue(results.get(0), new Windowed<>(keyA, new SessionWindow(0, 0)), "1");
+        verifyWindowedKeyValue(results.get(1), new Windowed<>(keyA, new SessionWindow(10, 10)), "2");
+    }
+
+    @Test
+    public void shouldReadUncommittedViewBackwardFetchSingleKeyMergesCacheAndStore() {
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(0, 0)), "1".getBytes());
+        cachingStore.commit(Map.of());
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(10, 10)), "2".getBytes());
+
+        final ReadOnlySessionStore<Bytes, byte[]> view = cachingStore.readOnly(IsolationLevel.READ_UNCOMMITTED);
+        final List<KeyValue<Windowed<Bytes>, byte[]>> results = toListAndCloseIterator(view.backwardFetch(keyA));
+        assertEquals(2, results.size());
+        verifyWindowedKeyValue(results.get(0), new Windowed<>(keyA, new SessionWindow(10, 10)), "2");
+        verifyWindowedKeyValue(results.get(1), new Windowed<>(keyA, new SessionWindow(0, 0)), "1");
+    }
+
+    @Test
+    public void shouldReadUncommittedViewFetchRangeMergesCacheAndStore() {
+        // keyA in store, keyB in cache
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(0, 0)), "1".getBytes());
+        cachingStore.commit(Map.of());
+        cachingStore.put(new Windowed<>(keyB, new SessionWindow(0, 0)), "2".getBytes());
+
+        final ReadOnlySessionStore<Bytes, byte[]> view = cachingStore.readOnly(IsolationLevel.READ_UNCOMMITTED);
+        final List<KeyValue<Windowed<Bytes>, byte[]>> results = toListAndCloseIterator(view.fetch(keyA, keyB));
+        assertEquals(2, results.size());
+        verifyWindowedKeyValue(results.get(0), new Windowed<>(keyA, new SessionWindow(0, 0)), "1");
+        verifyWindowedKeyValue(results.get(1), new Windowed<>(keyB, new SessionWindow(0, 0)), "2");
+    }
+
+    @Test
+    public void shouldReadUncommittedViewBackwardFetchRangeMergesCacheAndStore() {
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(0, 0)), "1".getBytes());
+        cachingStore.commit(Map.of());
+        cachingStore.put(new Windowed<>(keyB, new SessionWindow(0, 0)), "2".getBytes());
+
+        final ReadOnlySessionStore<Bytes, byte[]> view = cachingStore.readOnly(IsolationLevel.READ_UNCOMMITTED);
+        final List<KeyValue<Windowed<Bytes>, byte[]>> results = toListAndCloseIterator(view.backwardFetch(keyA, keyB));
+        assertEquals(2, results.size());
+        verifyWindowedKeyValue(results.get(0), new Windowed<>(keyB, new SessionWindow(0, 0)), "2");
+        verifyWindowedKeyValue(results.get(1), new Windowed<>(keyA, new SessionWindow(0, 0)), "1");
+    }
+
+    @Test
+    public void shouldReadUncommittedViewFetchSessionReturnsNullForCachedTombstone() {
+        // Flush keyA to the underlying store, then remove it (cache holds null tombstone).
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(0, 0)), "store".getBytes());
+        cachingStore.commit(Map.of());
+        cachingStore.remove(new Windowed<>(keyA, new SessionWindow(0, 0)));
+
+        final ReadOnlySessionStore<Bytes, byte[]> view = cachingStore.readOnly(IsolationLevel.READ_UNCOMMITTED);
+        // Cache tombstone (null value) shadows the underlying "store" value.
+        assertNull(view.fetchSession(keyA, 0, 0));
+    }
+
+    @Test
+    public void shouldReadUncommittedViewFetchRangeWithNullBounds() {
+        cachingStore.put(new Windowed<>(keyA, new SessionWindow(0, 0)), "1".getBytes());
+        cachingStore.put(new Windowed<>(keyB, new SessionWindow(0, 0)), "2".getBytes());
+        cachingStore.commit(Map.of());
+
+        final ReadOnlySessionStore<Bytes, byte[]> view = cachingStore.readOnly(IsolationLevel.READ_UNCOMMITTED);
+        // null keyFrom/keyTo means unbounded — should return all sessions without NPE.
+        final List<KeyValue<Windowed<Bytes>, byte[]>> results = toListAndCloseIterator(view.fetch(null, null));
+        assertEquals(2, results.size());
     }
 
     private List<KeyValue<Windowed<Bytes>, byte[]>> addSessionsUntilOverflow(final String... sessionIds) {
@@ -878,13 +1049,13 @@ public class CachingPersistentSessionStoreTest {
 
     public static class CacheFlushListenerStub<K, V> implements CacheFlushListener<byte[], byte[]> {
         private final Deserializer<K> keyDeserializer;
-        private final Deserializer<V> valueDesializer;
+        private final Deserializer<V> valueDeserializer;
         private final List<KeyValueTimestamp<K, Change<V>>> forwarded = new LinkedList<>();
 
         CacheFlushListenerStub(final Deserializer<K> keyDeserializer,
-                               final Deserializer<V> valueDesializer) {
+                               final Deserializer<V> valueDeserializer) {
             this.keyDeserializer = keyDeserializer;
-            this.valueDesializer = valueDesializer;
+            this.valueDeserializer = valueDeserializer;
         }
 
         @Override
@@ -893,8 +1064,8 @@ public class CachingPersistentSessionStoreTest {
                 new KeyValueTimestamp<>(
                     keyDeserializer.deserialize(null, record.key()),
                     new Change<>(
-                        valueDesializer.deserialize(null, record.value().newValue),
-                        valueDesializer.deserialize(null, record.value().oldValue)),
+                        valueDeserializer.deserialize(null, record.value().newValue),
+                        valueDeserializer.deserialize(null, record.value().oldValue)),
                     record.timestamp()
                 )
             );
