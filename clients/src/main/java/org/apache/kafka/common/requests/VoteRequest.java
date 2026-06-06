@@ -20,11 +20,11 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.message.VoteRequestData;
 import org.apache.kafka.common.message.VoteResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
-import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.protocol.Readable;
 
-import java.nio.ByteBuffer;
-import java.util.Collections;
+import java.util.List;
+
 
 public class VoteRequest extends AbstractRequest {
 
@@ -65,42 +65,30 @@ public class VoteRequest extends AbstractRequest {
             .setErrorCode(Errors.forException(e).code()));
     }
 
-    public static VoteRequest parse(ByteBuffer buffer, short version) {
-        return new VoteRequest(new VoteRequestData(new ByteBufferAccessor(buffer), version), version);
-    }
-
-    public static VoteRequestData singletonRequest(TopicPartition topicPartition,
-                                                   int candidateEpoch,
-                                                   int candidateId,
-                                                   int lastEpoch,
-                                                   long lastEpochEndOffset) {
-        return singletonRequest(topicPartition,
-            null,
-            candidateEpoch,
-            candidateId,
-            lastEpoch,
-            lastEpochEndOffset);
+    public static VoteRequest parse(Readable readable, short version) {
+        return new VoteRequest(new VoteRequestData(readable, version), version);
     }
 
     public static VoteRequestData singletonRequest(TopicPartition topicPartition,
                                                    String clusterId,
-                                                   int candidateEpoch,
-                                                   int candidateId,
+                                                   int replicaEpoch,
+                                                   int replicaId,
                                                    int lastEpoch,
-                                                   long lastEpochEndOffset) {
+                                                   long lastEpochEndOffset,
+                                                   boolean preVote) {
         return new VoteRequestData()
                    .setClusterId(clusterId)
-                   .setTopics(Collections.singletonList(
+                   .setTopics(List.of(
                        new VoteRequestData.TopicData()
                            .setTopicName(topicPartition.topic())
-                           .setPartitions(Collections.singletonList(
+                           .setPartitions(List.of(
                                new VoteRequestData.PartitionData()
                                    .setPartitionIndex(topicPartition.partition())
-                                   .setCandidateEpoch(candidateEpoch)
-                                   .setCandidateId(candidateId)
+                                   .setReplicaEpoch(replicaEpoch)
+                                   .setReplicaId(replicaId)
                                    .setLastOffsetEpoch(lastEpoch)
-                                   .setLastOffset(lastEpochEndOffset))
+                                   .setLastOffset(lastEpochEndOffset)
+                                   .setPreVote(preVote))
                            )));
     }
-
 }
