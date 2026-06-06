@@ -16,13 +16,15 @@
  */
 package org.apache.kafka.streams.state.internals;
 
+import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.streams.StoreQueryParameters;
 import org.apache.kafka.streams.processor.StateStore;
 import org.apache.kafka.streams.state.QueryableStoreType;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * A wrapper over all of the {@link StateStoreProvider}s in a Topology
@@ -34,10 +36,13 @@ public class QueryableStoreProvider {
     // map of StreamThread.name to StreamThreadStateStoreProvider
     private final Map<String, StreamThreadStateStoreProvider> storeProviders;
     private final GlobalStateStoreProvider globalStoreProvider;
+    private final Supplier<IsolationLevel> defaultIsolationLevel;
 
-    public QueryableStoreProvider(final GlobalStateStoreProvider globalStateStoreProvider) {
-        this.storeProviders = new HashMap<>();
+    public QueryableStoreProvider(final GlobalStateStoreProvider globalStateStoreProvider,
+                                  final Supplier<IsolationLevel> defaultIsolationLevel) {
+        this.storeProviders = new ConcurrentHashMap<>();
         this.globalStoreProvider = globalStateStoreProvider;
+        this.defaultIsolationLevel = defaultIsolationLevel;
     }
 
     /**
@@ -51,7 +56,7 @@ public class QueryableStoreProvider {
      * @param <T>                The expected type of the returned store
      * @return A composite object that wraps the store instances.
      */
-    public <T> T getStore(final StoreQueryParameters<T> storeQueryParameters) {
+    public <T> T store(final StoreQueryParameters<T> storeQueryParameters) {
         final String storeName = storeQueryParameters.storeName();
         final QueryableStoreType<T> queryableStoreType = storeQueryParameters.queryableStoreType();
         final List<T> globalStore = globalStoreProvider.stores(storeName, queryableStoreType);
@@ -59,7 +64,7 @@ public class QueryableStoreProvider {
             return queryableStoreType.create(globalStoreProvider, storeName);
         }
         return queryableStoreType.create(
-            new WrappingStoreProvider(storeProviders.values(), storeQueryParameters),
+            new WrappingStoreProvider(storeProviders.values(), storeQueryParameters, defaultIsolationLevel.get()),
             storeName
         );
     }

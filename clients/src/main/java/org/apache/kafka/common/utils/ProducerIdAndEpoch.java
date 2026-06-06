@@ -16,7 +16,7 @@
  */
 package org.apache.kafka.common.utils;
 
-import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.record.internal.RecordBatch;
 
 public class ProducerIdAndEpoch {
     public static final ProducerIdAndEpoch NONE = new ProducerIdAndEpoch(RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH);
@@ -35,7 +35,7 @@ public class ProducerIdAndEpoch {
 
     @Override
     public String toString() {
-        return "ProducerIdAndEpoch(producerId=" + producerId + ", epoch=" + epoch + ")";
+        return "(producerId=" + producerId + ", epoch=" + epoch + ")";
     }
 
     @Override

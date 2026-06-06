@@ -18,11 +18,14 @@ package org.apache.kafka.streams.processor.internals;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.utils.LogContext;
+import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.common.utils.internals.LogContext;
 import org.apache.kafka.streams.errors.DeserializationExceptionHandler;
+import org.apache.kafka.streams.errors.ProcessingExceptionHandler;
 import org.apache.kafka.streams.errors.StreamsException;
 import org.apache.kafka.streams.processor.api.Record;
+
 import org.slf4j.Logger;
 
 import java.io.IOException;
@@ -40,23 +43,34 @@ public class GlobalStateUpdateTask implements GlobalStateMaintainer {
     private final LogContext logContext;
 
     private final ProcessorTopology topology;
-    private final InternalProcessorContext processorContext;
+    private final InternalProcessorContext<?, ?> processorContext;
     private final Map<TopicPartition, Long> offsets = new HashMap<>();
     private final Map<String, RecordDeserializer> deserializers = new HashMap<>();
     private final GlobalStateManager stateMgr;
     private final DeserializationExceptionHandler deserializationExceptionHandler;
+    private final ProcessingExceptionHandler processingExceptionHandler;
+    private final Time time;
+    private final long flushInterval;
+    private long lastFlush;
 
     public GlobalStateUpdateTask(final LogContext logContext,
                                  final ProcessorTopology topology,
-                                 final InternalProcessorContext processorContext,
+                                 final InternalProcessorContext<?, ?> processorContext,
                                  final GlobalStateManager stateMgr,
-                                 final DeserializationExceptionHandler deserializationExceptionHandler) {
+                                 final DeserializationExceptionHandler deserializationExceptionHandler,
+                                 final ProcessingExceptionHandler processingExceptionHandler,
+                                 final Time time,
+                                 final long flushInterval
+                                 ) {
         this.logContext = logContext;
         this.log = logContext.logger(getClass());
         this.topology = topology;
         this.stateMgr = stateMgr;
         this.processorContext = processorContext;
         this.deserializationExceptionHandler = deserializationExceptionHandler;
+        this.processingExceptionHandler = processingExceptionHandler;
+        this.time = time;
+        this.flushInterval = flushInterval;
     }
 
     /**
@@ -86,6 +100,8 @@ public class GlobalStateUpdateTask implements GlobalStateMaintainer {
         }
         initTopology();
         processorContext.initialize();
+        flushState();
+        lastFlush = time.milliseconds();
         return stateMgr.changelogOffsets();
     }
 
@@ -108,8 +124,8 @@ public class GlobalStateUpdateTask implements GlobalStateMaintainer {
             final Record<Object, Object> toProcess = new Record<>(
                 deserialized.key(),
                 deserialized.value(),
-                processorContext.timestamp(),
-                processorContext.headers()
+                processorContext.recordContext().timestamp(),
+                processorContext.recordContext().headers()
             );
             ((SourceNode<Object, Object>) sourceNodeAndDeserializer.sourceNode()).process(toProcess);
         }
@@ -121,12 +137,14 @@ public class GlobalStateUpdateTask implements GlobalStateMaintainer {
         // this could theoretically throw a ProcessorStateException caused by a ProducerFencedException,
         // but in practice this shouldn't happen for global state update tasks, since the stores are not
         // logged and there are no downstream operators after global stores.
-        stateMgr.flush();
         stateMgr.updateChangelogOffsets(offsets);
-        stateMgr.checkpoint();
+        stateMgr.commit();
     }
 
     public void close(final boolean wipeStateStore) throws IOException {
+        if (!wipeStateStore) {
+            flushState();
+        }
         stateMgr.close();
         if (wipeStateStore) {
             try {
@@ -138,17 +156,25 @@ public class GlobalStateUpdateTask implements GlobalStateMaintainer {
         }
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private void initTopology() {
         for (final ProcessorNode<?, ?, ?, ?> node : this.topology.processors()) {
             processorContext.setCurrentNode(node);
             try {
-                node.init(this.processorContext);
+                node.init((InternalProcessorContext) this.processorContext, processingExceptionHandler);
             } finally {
                 processorContext.setCurrentNode(null);
             }
         }
     }
 
+    @Override
+    public void maybeCheckpoint() {
+        final long now = time.milliseconds();
+        if (now - flushInterval >= lastFlush && StateManagerUtil.checkpointNeeded(false, stateMgr.changelogOffsets(), offsets)) {
+            flushState();
+            lastFlush = now;
+        }
+    }
 
 }
