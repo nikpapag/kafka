@@ -19,37 +19,21 @@ package org.apache.kafka.image;
 
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.metadata.ConfigRecord;
-import org.apache.kafka.server.common.ApiMessageAndVersion;
+import org.apache.kafka.image.node.ConfigurationImageNode;
+import org.apache.kafka.image.writer.ImageWriter;
 
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
-import java.util.function.Consumer;
-import java.util.stream.Collectors;
-
-import static org.apache.kafka.common.metadata.MetadataRecordType.CONFIG_RECORD;
 
 
 /**
  * Represents the configuration of a resource.
- *
+ * <p>
  * This class is thread-safe.
  */
-public final class ConfigurationImage {
-    public static final ConfigurationImage EMPTY = new ConfigurationImage(Collections.emptyMap());
-
-    private final Map<String, String> data;
-
-    public ConfigurationImage(Map<String, String> data) {
-        this.data = data;
-    }
-
-    Map<String, String> data() {
-        return data;
-    }
+public record ConfigurationImage(ConfigResource resource, Map<String, String> data) {
 
     public boolean isEmpty() {
         return data.isEmpty();
@@ -61,22 +45,26 @@ public final class ConfigurationImage {
         return properties;
     }
 
-    public void write(ConfigResource configResource, Consumer<List<ApiMessageAndVersion>> out) {
-        List<ApiMessageAndVersion> records = new ArrayList<>();
+    public Map<String, String> toMap() {
+        return Collections.unmodifiableMap(data);
+    }
+
+    public void write(
+        ConfigResource configResource,
+        ImageWriter writer
+    ) {
         for (Map.Entry<String, String> entry : data.entrySet()) {
-            records.add(new ApiMessageAndVersion(new ConfigRecord().
+            writer.write(0, new ConfigRecord().
                 setResourceType(configResource.type().id()).
                 setResourceName(configResource.name()).
                 setName(entry.getKey()).
-                setValue(entry.getValue()), CONFIG_RECORD.highestSupportedVersion()));
+                setValue(entry.getValue()));
         }
-        out.accept(records);
     }
 
     @Override
     public boolean equals(Object o) {
-        if (!(o instanceof ConfigurationImage)) return false;
-        ConfigurationImage other = (ConfigurationImage) o;
+        if (!(o instanceof ConfigurationImage other)) return false;
         return data.equals(other.data);
     }
 
@@ -87,8 +75,6 @@ public final class ConfigurationImage {
 
     @Override
     public String toString() {
-        return "ConfigurationImage(data=" + data.entrySet().stream().
-            map(e -> e.getKey() + ":" + e.getValue()).collect(Collectors.joining(", ")) +
-            ")";
+        return new ConfigurationImageNode(this).stringify();
     }
 }

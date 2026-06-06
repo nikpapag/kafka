@@ -33,8 +33,8 @@ import org.apache.kafka.common.message.DescribeProducersResponseData.TopicRespon
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.DescribeProducersRequest;
 import org.apache.kafka.common.requests.DescribeProducersResponse;
-import org.apache.kafka.common.utils.CollectionUtils;
 import org.apache.kafka.common.utils.LogContext;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
@@ -49,11 +49,9 @@ import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonList;
-import static java.util.Collections.singletonMap;
-import static org.apache.kafka.common.utils.Utils.mkSet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class DescribeProducersHandlerTest {
     private DescribeProducersHandler newHandler(
@@ -69,7 +67,7 @@ public class DescribeProducersHandlerTest {
     @Test
     public void testBrokerIdSetInOptions() {
         int brokerId = 3;
-        Set<TopicPartition> topicPartitions = mkSet(
+        Set<TopicPartition> topicPartitions = Set.of(
             new TopicPartition("foo", 5),
             new TopicPartition("bar", 3),
             new TopicPartition("foo", 4)
@@ -88,7 +86,7 @@ public class DescribeProducersHandlerTest {
 
     @Test
     public void testBrokerIdNotSetInOptions() {
-        Set<TopicPartition> topicPartitions = mkSet(
+        Set<TopicPartition> topicPartitions = Set.of(
             new TopicPartition("foo", 5),
             new TopicPartition("bar", 3),
             new TopicPartition("foo", 4)
@@ -107,7 +105,7 @@ public class DescribeProducersHandlerTest {
 
     @Test
     public void testBuildRequest() {
-        Set<TopicPartition> topicPartitions = mkSet(
+        Set<TopicPartition> topicPartitions = Set.of(
             new TopicPartition("foo", 5),
             new TopicPartition("bar", 3),
             new TopicPartition("foo", 4)
@@ -120,15 +118,15 @@ public class DescribeProducersHandlerTest {
         int brokerId = 3;
         DescribeProducersRequest.Builder request = handler.buildBatchedRequest(brokerId, topicPartitions);
 
-        List<DescribeProducersRequestData.TopicRequest> topics = request.data.topics();
+        DescribeProducersRequestData.TopicRequestCollection topics = request.data.topics();
 
-        assertEquals(mkSet("foo", "bar"), topics.stream()
+        assertEquals(Set.of("foo", "bar"), topics.stream()
             .map(DescribeProducersRequestData.TopicRequest::name)
             .collect(Collectors.toSet()));
 
         topics.forEach(topic -> {
             Set<Integer> expectedTopicPartitions = "foo".equals(topic.name()) ?
-                mkSet(4, 5) : mkSet(3);
+                Set.of(4, 5) : Set.of(3);
             assertEquals(expectedTopicPartitions, new HashSet<>(topic.partitionIndexes()));
         });
     }
@@ -137,25 +135,25 @@ public class DescribeProducersHandlerTest {
     public void testAuthorizationFailure() {
         TopicPartition topicPartition = new TopicPartition("foo", 5);
         Throwable exception = assertFatalError(topicPartition, Errors.TOPIC_AUTHORIZATION_FAILED);
-        assertTrue(exception instanceof TopicAuthorizationException);
+        assertInstanceOf(TopicAuthorizationException.class, exception);
         TopicAuthorizationException authException = (TopicAuthorizationException) exception;
-        assertEquals(mkSet("foo"), authException.unauthorizedTopics());
+        assertEquals(Set.of("foo"), authException.unauthorizedTopics());
     }
 
     @Test
     public void testInvalidTopic() {
         TopicPartition topicPartition = new TopicPartition("foo", 5);
         Throwable exception = assertFatalError(topicPartition, Errors.INVALID_TOPIC_EXCEPTION);
-        assertTrue(exception instanceof InvalidTopicException);
+        assertInstanceOf(InvalidTopicException.class, exception);
         InvalidTopicException invalidTopicException = (InvalidTopicException) exception;
-        assertEquals(mkSet("foo"), invalidTopicException.invalidTopics());
+        assertEquals(Set.of("foo"), invalidTopicException.invalidTopics());
     }
 
     @Test
     public void testUnexpectedError() {
         TopicPartition topicPartition = new TopicPartition("foo", 5);
         Throwable exception = assertFatalError(topicPartition, Errors.UNKNOWN_SERVER_ERROR);
-        assertTrue(exception instanceof UnknownServerException);
+        assertInstanceOf(UnknownServerException.class, exception);
     }
 
     @Test
@@ -183,9 +181,9 @@ public class DescribeProducersHandlerTest {
             handleResponseWithError(options, topicPartition, Errors.NOT_LEADER_OR_FOLLOWER);
         assertEquals(emptyMap(), result.completedKeys);
         assertEquals(emptyList(), result.unmappedKeys);
-        assertEquals(mkSet(topicPartition), result.failedKeys.keySet());
+        assertEquals(Set.of(topicPartition), result.failedKeys.keySet());
         Throwable exception = result.failedKeys.get(topicPartition);
-        assertTrue(exception instanceof NotLeaderOrFollowerException);
+        assertInstanceOf(NotLeaderOrFollowerException.class, exception);
     }
 
     @Test
@@ -195,15 +193,13 @@ public class DescribeProducersHandlerTest {
         DescribeProducersHandler handler = newHandler(options);
 
         PartitionResponse partitionResponse = sampleProducerState(topicPartition);
-        DescribeProducersResponse response = describeProducersResponse(
-            singletonMap(topicPartition, partitionResponse)
-        );
+        DescribeProducersResponse response = describeProducersResponse(topicPartition, partitionResponse);
         Node node = new Node(3, "host", 1);
 
         ApiResult<TopicPartition, PartitionProducerState> result =
-            handler.handleResponse(node, mkSet(topicPartition), response);
+            handler.handleResponse(node, Set.of(topicPartition), response);
 
-        assertEquals(mkSet(topicPartition), result.completedKeys.keySet());
+        assertEquals(Set.of(topicPartition), result.completedKeys.keySet());
         assertEquals(emptyMap(), result.failedKeys);
         assertEquals(emptyList(), result.unmappedKeys);
 
@@ -230,7 +226,7 @@ public class DescribeProducersHandlerTest {
             new DescribeProducersOptions(), topicPartition, error);
         assertEquals(emptyMap(), result.completedKeys);
         assertEquals(emptyList(), result.unmappedKeys);
-        assertEquals(mkSet(topicPartition), result.failedKeys.keySet());
+        assertEquals(Set.of(topicPartition), result.failedKeys.keySet());
         return result.failedKeys.get(topicPartition);
     }
 
@@ -242,7 +238,7 @@ public class DescribeProducersHandlerTest {
         DescribeProducersHandler handler = newHandler(options);
         DescribeProducersResponse response = buildResponseWithError(topicPartition, error);
         Node node = new Node(options.brokerId().orElse(3), "host", 1);
-        return handler.handleResponse(node, mkSet(topicPartition), response);
+        return handler.handleResponse(node, Set.of(topicPartition), response);
     }
 
     private DescribeProducersResponse buildResponseWithError(
@@ -252,7 +248,7 @@ public class DescribeProducersHandlerTest {
         PartitionResponse partitionResponse = new PartitionResponse()
             .setPartitionIndex(topicPartition.partition())
             .setErrorCode(error.code());
-        return describeProducersResponse(singletonMap(topicPartition, partitionResponse));
+        return describeProducersResponse(topicPartition, partitionResponse);
     }
 
     private PartitionResponse sampleProducerState(TopicPartition topicPartition) {
@@ -304,27 +300,16 @@ public class DescribeProducersHandlerTest {
     }
 
     private DescribeProducersResponse describeProducersResponse(
-        Map<TopicPartition, PartitionResponse> partitionResponses
+        TopicPartition partition, PartitionResponse partitionResponse
     ) {
         DescribeProducersResponseData response = new DescribeProducersResponseData();
-        Map<String, Map<Integer, PartitionResponse>> partitionResponsesByTopic =
-            CollectionUtils.groupPartitionDataByTopic(partitionResponses);
 
-        for (Map.Entry<String, Map<Integer, PartitionResponse>> topicEntry : partitionResponsesByTopic.entrySet()) {
-            String topic = topicEntry.getKey();
-            Map<Integer, PartitionResponse> topicPartitionResponses = topicEntry.getValue();
+        TopicResponse topicResponse = new TopicResponse().setName(partition.topic());
+        int partitionId = partition.partition();
+        topicResponse.partitions().add(partitionResponse.setPartitionIndex(partitionId));
 
-            TopicResponse topicResponse = new TopicResponse().setName(topic);
-            response.topics().add(topicResponse);
-
-            for (Map.Entry<Integer, PartitionResponse> partitionEntry : topicPartitionResponses.entrySet()) {
-                Integer partitionId = partitionEntry.getKey();
-                PartitionResponse partitionResponse = partitionEntry.getValue();
-                topicResponse.partitions().add(partitionResponse.setPartitionIndex(partitionId));
-            }
-        }
+        response.topics().add(topicResponse);
 
         return new DescribeProducersResponse(response);
     }
-
 }

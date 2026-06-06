@@ -17,8 +17,6 @@
 package kafka.server
 
 import java.net.SocketTimeoutException
-
-import kafka.cluster.BrokerEndPoint
 import org.apache.kafka.clients._
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network._
@@ -28,8 +26,8 @@ import org.apache.kafka.common.utils.{LogContext, Time}
 import org.apache.kafka.clients.{ApiVersions, ClientResponse, ManualMetadataUpdater, NetworkClient}
 import org.apache.kafka.common.{Node, Reconfigurable}
 import org.apache.kafka.common.requests.AbstractRequest.Builder
-
-import scala.jdk.CollectionConverters._
+import org.apache.kafka.common.metrics.internals.MetricsUtils
+import org.apache.kafka.server.network.BrokerEndPoint
 
 trait BlockingSend {
 
@@ -61,7 +59,6 @@ class BrokerBlockingSender(sourceBroker: BrokerEndPoint,
       brokerConfig.interBrokerListenerName,
       brokerConfig.saslMechanismInterBrokerProtocol,
       time,
-      brokerConfig.saslInterBrokerHandshakeRequestEnable,
       logContext
     )
     val reconfigurableChannelBuilder = channelBuilder match {
@@ -76,7 +73,7 @@ class BrokerBlockingSender(sourceBroker: BrokerEndPoint,
       metrics,
       time,
       "replica-fetcher",
-      Map("broker-id" -> sourceBroker.id.toString, "fetcher-id" -> fetcherId.toString).asJava,
+      MetricsUtils.getTags("broker-id", sourceBroker.id.toString, "fetcher-id", fetcherId.toString),
       false,
       channelBuilder,
       logContext
@@ -96,7 +93,8 @@ class BrokerBlockingSender(sourceBroker: BrokerEndPoint,
       time,
       false,
       new ApiVersions,
-      logContext
+      logContext,
+      MetadataRecoveryStrategy.NONE
     )
     (networkClient, reconfigurableChannelBuilder)
   }

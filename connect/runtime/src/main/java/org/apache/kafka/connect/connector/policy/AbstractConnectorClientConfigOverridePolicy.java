@@ -18,6 +18,7 @@
 package org.apache.kafka.connect.connector.policy;
 
 import org.apache.kafka.common.config.ConfigValue;
+import org.apache.kafka.common.utils.AppInfoParser;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -25,6 +26,11 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 public abstract class AbstractConnectorClientConfigOverridePolicy implements ConnectorClientConfigOverridePolicy {
+
+    @Override
+    public String version() {
+        return AppInfoParser.getVersion();
+    }
 
     @Override
     public void close() {

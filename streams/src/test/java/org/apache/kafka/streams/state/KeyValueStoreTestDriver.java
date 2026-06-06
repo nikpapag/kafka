@@ -16,7 +16,9 @@
  */
 package org.apache.kafka.streams.state;
 
+import org.apache.kafka.clients.producer.MockProducer;
 import org.apache.kafka.common.header.Headers;
+import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.serialization.Serdes;
@@ -26,12 +28,13 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.errors.DefaultProductionExceptionHandler;
-import org.apache.kafka.streams.processor.ProcessorContext;
 import org.apache.kafka.streams.processor.StateRestoreCallback;
 import org.apache.kafka.streams.processor.StateStore;
 import org.apache.kafka.streams.processor.StateStoreContext;
 import org.apache.kafka.streams.processor.StreamPartitioner;
 import org.apache.kafka.streams.processor.TaskId;
+import org.apache.kafka.streams.processor.api.ProcessorContext;
+import org.apache.kafka.streams.processor.api.Record;
 import org.apache.kafka.streams.processor.internals.InternalProcessorContext;
 import org.apache.kafka.streams.processor.internals.MockStreamsMetrics;
 import org.apache.kafka.streams.processor.internals.ProcessorTopology;
@@ -41,7 +44,6 @@ import org.apache.kafka.streams.processor.internals.StreamsProducer;
 import org.apache.kafka.streams.state.internals.MeteredKeyValueStore;
 import org.apache.kafka.streams.state.internals.ThreadCache;
 import org.apache.kafka.test.InternalMockProcessorContext;
-import org.apache.kafka.test.MockClientSupplier;
 import org.apache.kafka.test.MockRocksDbConfigSetter;
 import org.apache.kafka.test.MockTimestampExtractor;
 import org.apache.kafka.test.TestUtils;
@@ -57,12 +59,13 @@ import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 
+import static org.apache.kafka.streams.internals.StreamsConfigUtils.ProcessingMode.AT_LEAST_ONCE;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * A component that provides a {@link #context() ProcessingContext} that can be supplied to a {@link KeyValueStore} so that
- * all entries written to the Kafka topic by the store during {@link KeyValueStore#flush()} are captured for testing purposes.
+ * A component that provides a {@link #context() StateStoreContext} that can be supplied to a {@link KeyValueStore} so that
+ * all entries written to the Kafka topic by the store during {@link KeyValueStore#commit(Map)} are captured for testing purposes.
  * This class simplifies testing of various {@link KeyValueStore} instances, especially those that use
  * {@link MeteredKeyValueStore} to monitor and write its entries to the Kafka topic.
  *
@@ -91,29 +94,29 @@ import static org.mockito.Mockito.when;
  * assertNull(store.get(3));
  * store.delete(5);
  *
- * // Flush the store and verify all current entries were properly flushed ...
- * store.flush();
- * assertEquals("zero", driver.flushedEntryStored(0));
- * assertEquals("one", driver.flushedEntryStored(1));
- * assertEquals("two", driver.flushedEntryStored(2));
- * assertEquals("four", driver.flushedEntryStored(4));
- * assertNull(driver.flushedEntryStored(5));
+ * // Commit the store and verify all current entries were properly committed ...
+ * store.commit(Map.of());
+ * assertEquals("zero", driver.committedEntryStored(0));
+ * assertEquals("one", driver.committedEntryStored(1));
+ * assertEquals("two", driver.committedEntryStored(2));
+ * assertEquals("four", driver.committedEntryStored(4));
+ * assertNull(driver.committedEntryStored(5));
  *
- * assertEquals(false, driver.flushedEntryRemoved(0));
- * assertEquals(false, driver.flushedEntryRemoved(1));
- * assertEquals(false, driver.flushedEntryRemoved(2));
- * assertEquals(false, driver.flushedEntryRemoved(4));
- * assertEquals(true, driver.flushedEntryRemoved(5));
+ * assertEquals(false, driver.committedEntryRemoved(0));
+ * assertEquals(false, driver.committedEntryRemoved(1));
+ * assertEquals(false, driver.committedEntryRemoved(2));
+ * assertEquals(false, driver.committedEntryRemoved(4));
+ * assertEquals(true, driver.committedEntryRemoved(5));
  * </pre>
  *
  *
  * <h2>Restoring a store</h2>
  * This component can be used to test whether a {@link KeyValueStore} implementation properly
- * {@link ProcessorContext#register(StateStore, StateRestoreCallback) registers itself} with the {@link ProcessorContext}, so that
- * the persisted contents of a store are properly restored from the flushed entries when the store instance is started.
+ * {@link StateStoreContext#register(StateStore, StateRestoreCallback) registers itself} with the {@link StateStoreContext}, so that
+ * the persisted contents of a store are properly restored from the committed entries when the store instance is started.
  * <p>
  * To do this, create an instance of this driver component, {@link #addEntryToRestoreLog(Object, Object) add entries} that will be
- * passed to the store upon creation (simulating the entries that were previously flushed to the topic), and then create the store
+ * passed to the store upon creation (simulating the entries that were previously committed to the topic), and then create the store
  * using this driver's {@link #context() ProcessorContext}:
  *
  * <pre>
@@ -148,7 +151,7 @@ public class KeyValueStoreTestDriver<K, V> {
 
     /**
      * Create a driver object that will have a {@link #context()} that records messages
-     * {@link ProcessorContext#forward(Object, Object) forwarded} by the store and that provides default serializers and
+     * {@link ProcessorContext#forward(Record) forwarded} by the store and that provides default serializers and
      * deserializers for the given built-in key and value types (e.g., {@code String.class}, {@code Integer.class},
      * {@code Long.class}, and {@code byte[].class}). This can be used when store is created to rely upon the
      * ProcessorContext's default key and value serializers and deserializers.
@@ -166,14 +169,14 @@ public class KeyValueStoreTestDriver<K, V> {
 
     /**
      * Create a driver object that will have a {@link #context()} that records messages
-     * {@link ProcessorContext#forward(Object, Object) forwarded} by the store and that provides the specified serializers and
+     * {@link ProcessorContext#forward(Record) forwarded} by the store and that provides the specified serializers and
      * deserializers. This can be used when store is created to rely upon the ProcessorContext's default key and value serializers
      * and deserializers.
      *
-     * @param keySerializer     the key serializer for the {@link ProcessorContext}; may not be null
-     * @param keyDeserializer   the key deserializer for the {@link ProcessorContext}; may not be null
-     * @param valueSerializer   the value serializer for the {@link ProcessorContext}; may not be null
-     * @param valueDeserializer the value deserializer for the {@link ProcessorContext}; may not be null
+     * @param keySerializer     the key serializer for the {@link StateStoreContext}; may not be null
+     * @param keyDeserializer   the key deserializer for the {@link StateStoreContext}; may not be null
+     * @param valueSerializer   the value serializer for the {@link StateStoreContext}; may not be null
+     * @param valueDeserializer the value deserializer for the {@link StateStoreContext}; may not be null
      * @return the test driver; never null
      */
     public static <K, V> KeyValueStoreTestDriver<K, V> create(final Serializer<K> keySerializer,
@@ -187,14 +190,14 @@ public class KeyValueStoreTestDriver<K, V> {
         return new KeyValueStoreTestDriver<>(serdes);
     }
 
-    private final Map<K, V> flushedEntries = new HashMap<>();
-    private final Set<K> flushedRemovals = new HashSet<>();
+    private final Map<K, V> committedEntries = new HashMap<>();
+    private final Set<K> committedRemovals = new HashSet<>();
     private final List<KeyValue<byte[], byte[]>> restorableEntries = new LinkedList<>();
 
-    private final InternalMockProcessorContext context;
+    private final InternalMockProcessorContext<?, ?> context;
     private final StateSerdes<K, V> stateSerdes;
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings("resource")
     private KeyValueStoreTestDriver(final StateSerdes<K, V> serdes) {
         props = new Properties();
         props.put(StreamsConfig.APPLICATION_ID_CONFIG, "application-id");
@@ -213,13 +216,11 @@ public class KeyValueStoreTestDriver<K, V> {
             logContext,
             new TaskId(0, 0),
             new StreamsProducer(
-                new StreamsConfig(props),
-                "threadId",
-                new MockClientSupplier(),
-                null,
-                null,
-                logContext,
-                Time.SYSTEM),
+                new MockProducer<>(null, true, null, null, null),
+                AT_LEAST_ONCE,
+                Time.SYSTEM,
+                logContext
+            ),
             new DefaultProductionExceptionHandler(),
             new MockStreamsMetrics(new Metrics()),
             topology
@@ -240,10 +241,10 @@ public class KeyValueStoreTestDriver<K, V> {
                 final byte[] keyBytes = keySerializer.serialize(topic, headers, key);
                 final byte[] valueBytes = valueSerializer.serialize(topic, headers, value);
 
-                final K keyTest = serdes.keyFrom(keyBytes);
-                final V valueTest = serdes.valueFrom(valueBytes);
+                final K keyTest = serdes.keyFrom(keyBytes, headers);
+                final V valueTest = serdes.valueFrom(valueBytes, headers);
 
-                recordFlushed(keyTest, valueTest);
+                recordCommitted(keyTest, valueTest);
             }
 
             @Override
@@ -266,7 +267,7 @@ public class KeyValueStoreTestDriver<K, V> {
         stateDir.mkdirs();
         stateSerdes = serdes;
 
-        context = new InternalMockProcessorContext(stateDir, serdes.keySerde(), serdes.valueSerde(), recordCollector, null) {
+        context = new InternalMockProcessorContext<>(stateDir, serdes.keySerde(), serdes.valueSerde(), recordCollector, null) {
             final ThreadCache cache = new ThreadCache(new LogContext("testCache "), 1024 * 1024L, metrics());
 
             @Override
@@ -286,21 +287,21 @@ public class KeyValueStoreTestDriver<K, V> {
         };
     }
 
-    private void recordFlushed(final K key, final V value) {
+    private void recordCommitted(final K key, final V value) {
         if (value == null) {
             // This is a removal ...
-            flushedRemovals.add(key);
-            flushedEntries.remove(key);
+            committedRemovals.add(key);
+            committedEntries.remove(key);
         } else {
             // This is a normal add
-            flushedEntries.put(key, value);
-            flushedRemovals.remove(key);
+            committedEntries.put(key, value);
+            committedRemovals.remove(key);
         }
     }
 
     /**
      * Get the entries that are restored to a KeyValueStore when it is constructed with this driver's {@link #context()
-     * ProcessorContext}.
+     * StateStoreContext}.
      *
      * @return the restore entries; never null but possibly a null iterator
      */
@@ -338,16 +339,16 @@ public class KeyValueStoreTestDriver<K, V> {
      * @see #checkForRestoredEntries(KeyValueStore)
      */
     public void addEntryToRestoreLog(final K key, final V value) {
-        restorableEntries.add(new KeyValue<>(stateSerdes.rawKey(key), stateSerdes.rawValue(value)));
+        restorableEntries.add(new KeyValue<>(stateSerdes.rawKey(key, new RecordHeaders()), stateSerdes.rawValue(value, new RecordHeaders())));
     }
 
     /**
      * Get the context that should be supplied to a {@link KeyValueStore}'s constructor. This context records any messages
-     * written by the store to the Kafka topic, making them available via the {@link #flushedEntryStored(Object)} and
-     * {@link #flushedEntryRemoved(Object)} methods.
+     * written by the store to the Kafka topic, making them available via the {@link #committedEntryStored(Object)} and
+     * {@link #committedEntryRemoved(Object)} methods.
      * <p>
      * If the {@link KeyValueStore}'s are to be restored upon its startup, be sure to {@link #addEntryToRestoreLog(Object, Object)
-     * add the restore entries} before creating the store with the {@link ProcessorContext} returned by this method.
+     * add the restore entries} before creating the store with the {@link StateStoreContext} returned by this method.
      *
      * @return the processing context; never null
      * @see #addEntryToRestoreLog(Object, Object)
@@ -368,8 +369,8 @@ public class KeyValueStoreTestDriver<K, V> {
         int missing = 0;
         for (final KeyValue<byte[], byte[]> kv : restorableEntries) {
             if (kv != null) {
-                final V value = store.get(stateSerdes.keyFrom(kv.key));
-                if (!Objects.equals(value, stateSerdes.valueFrom(kv.value))) {
+                final V value = store.get(stateSerdes.keyFrom(kv.key, new RecordHeaders()));
+                if (!Objects.equals(value, stateSerdes.valueFrom(kv.value, new RecordHeaders()))) {
                     ++missing;
                 }
             }
@@ -380,7 +381,7 @@ public class KeyValueStoreTestDriver<K, V> {
     /**
      * Utility method to compute the number of entries within the store.
      *
-     * @param store the key value store using this {@link #context()}.
+     * @param store the key value store using this {@link #context() StateStoreContext}.
      * @return the number of entries
      */
     public int sizeOf(final KeyValueStore<K, V> store) {
@@ -395,47 +396,47 @@ public class KeyValueStoreTestDriver<K, V> {
     }
 
     /**
-     * Retrieve the value that the store {@link KeyValueStore#flush() flushed} with the given key.
+     * Retrieve the value that the store {@link KeyValueStore#commit(Map) committed} with the given key.
      *
      * @param key the key
-     * @return the value that was flushed with the key, or {@code null} if no such key was flushed or if the entry with this
-     * key was removed upon flush
+     * @return the value that was committed with the key, or {@code null} if no such key was committed or if the entry with this
+     * key was removed upon commit
      */
-    public V flushedEntryStored(final K key) {
-        return flushedEntries.get(key);
+    public V committedEntryStored(final K key) {
+        return committedEntries.get(key);
     }
 
     /**
-     * Determine whether the store {@link KeyValueStore#flush() flushed} the removal of the given key.
+     * Determine whether the store {@link KeyValueStore#commit(Map) committed} the removal of the given key.
      *
      * @param key the key
-     * @return {@code true} if the entry with the given key was removed when flushed, or {@code false} if the entry was not
-     * removed when last flushed
+     * @return {@code true} if the entry with the given key was removed when committed, or {@code false} if the entry was not
+     * removed when last committed
      */
-    public boolean flushedEntryRemoved(final K key) {
-        return flushedRemovals.contains(key);
+    public boolean committedEntryRemoved(final K key) {
+        return committedRemovals.contains(key);
     }
 
     /**
      * Return number of removed entry
      */
-    public int numFlushedEntryStored() {
-        return flushedEntries.size();
+    public int numCommittedEntryStored() {
+        return committedEntries.size();
     }
 
     /**
      * Return number of removed entry
      */
-    public int numFlushedEntryRemoved() {
-        return flushedRemovals.size();
+    public int numCommittedEntryRemoved() {
+        return committedRemovals.size();
     }
 
     /**
-     * Remove all {@link #flushedEntryStored(Object) flushed entries}, {@link #flushedEntryRemoved(Object) flushed removals},
+     * Remove all {@link #committedEntryStored(Object) committed entries}, {@link #committedEntryRemoved(Object) committed removals},
      */
     public void clear() {
         restorableEntries.clear();
-        flushedEntries.clear();
-        flushedRemovals.clear();
+        committedEntries.clear();
+        committedRemovals.clear();
     }
 }

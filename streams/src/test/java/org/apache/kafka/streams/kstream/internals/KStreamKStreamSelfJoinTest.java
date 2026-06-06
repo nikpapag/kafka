@@ -16,11 +16,6 @@
  */
 package org.apache.kafka.streams.kstream.internals;
 
-import static java.time.Duration.ofMillis;
-import static java.time.Duration.ofSeconds;
-
-import java.util.List;
-import java.util.Properties;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.streams.KeyValueTimestamp;
@@ -37,17 +32,27 @@ import org.apache.kafka.streams.kstream.ValueJoiner;
 import org.apache.kafka.test.MockApiProcessor;
 import org.apache.kafka.test.MockApiProcessorSupplier;
 import org.apache.kafka.test.StreamsTestUtils;
-import org.junit.Test;
+
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+
+import java.util.List;
+import java.util.Properties;
+
+import static java.time.Duration.ofMillis;
+import static java.time.Duration.ofSeconds;
 
 public class KStreamKStreamSelfJoinTest {
     private final String topic1 = "topic1";
     private final String topic2 = "topic2";
-    private final Properties props = StreamsTestUtils.getStreamsConfig(Serdes.String(), Serdes.String());
+    private Properties props = StreamsTestUtils.getStreamsConfig(Serdes.String(), Serdes.String());
 
-    @Test
-    public void shouldMatchInnerJoinWithSelfJoinWithSingleStream() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldMatchInnerJoinWithSelfJoinWithSingleStream(final boolean withHeaders) {
         props.setProperty(StreamsConfig.BUILT_IN_METRICS_VERSION_CONFIG, StreamsConfig.METRICS_LATEST);
         props.put(StreamsConfig.TOPOLOGY_OPTIMIZATION_CONFIG, StreamsConfig.OPTIMIZE);
+        setDslStoreFormat(withHeaders);
         final ValueJoiner<String, String, String> valueJoiner = (v, v2) -> v + v2;
         final List<KeyValueTimestamp<String, String>> expected;
         final StreamsBuilder streamsBuilder = new StreamsBuilder();
@@ -111,10 +116,12 @@ public class KStreamKStreamSelfJoinTest {
     }
 
 
-    @Test
-    public void shouldMatchInnerJoinWithSelfJoinWithTwoStreams() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldMatchInnerJoinWithSelfJoinWithTwoStreams(final boolean withHeaders) {
         props.setProperty(StreamsConfig.BUILT_IN_METRICS_VERSION_CONFIG, StreamsConfig.METRICS_LATEST);
         props.put(StreamsConfig.TOPOLOGY_OPTIMIZATION_CONFIG, StreamsConfig.OPTIMIZE);
+        setDslStoreFormat(withHeaders);
         final ValueJoiner<String, String, String> valueJoiner = (v, v2) -> v + v2;
         final List<KeyValueTimestamp<String, String>> expected;
         final StreamsBuilder streamsBuilder = new StreamsBuilder();
@@ -181,10 +188,12 @@ public class KStreamKStreamSelfJoinTest {
         }
     }
 
-    @Test
-    public void shouldMatchInnerJoinWithSelfJoinDifferentBeforeAfterWindows() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldMatchInnerJoinWithSelfJoinDifferentBeforeAfterWindows(final boolean withHeaders) {
         props.setProperty(StreamsConfig.BUILT_IN_METRICS_VERSION_CONFIG, StreamsConfig.METRICS_LATEST);
         props.put(StreamsConfig.TOPOLOGY_OPTIMIZATION_CONFIG, StreamsConfig.OPTIMIZE);
+        setDslStoreFormat(withHeaders);
         final ValueJoiner<String, String, String> valueJoiner = (v, v2) -> v + v2;
         final List<KeyValueTimestamp<String, String>> expected;
         final StreamsBuilder streamsBuilder = new StreamsBuilder();
@@ -256,10 +265,12 @@ public class KStreamKStreamSelfJoinTest {
         }
     }
 
-    @Test
-    public void shouldMatchInnerJoinWithSelfJoinOutOfOrderMessages() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldMatchInnerJoinWithSelfJoinOutOfOrderMessages(final boolean withHeaders) {
         props.setProperty(StreamsConfig.BUILT_IN_METRICS_VERSION_CONFIG, StreamsConfig.METRICS_LATEST);
         props.put(StreamsConfig.TOPOLOGY_OPTIMIZATION_CONFIG, StreamsConfig.OPTIMIZE);
+        setDslStoreFormat(withHeaders);
         final ValueJoiner<String, String, String> valueJoiner = (v, v2) -> v + v2;
         final List<KeyValueTimestamp<String, String>> expected;
         final StreamsBuilder streamsBuilder = new StreamsBuilder();
@@ -332,6 +343,21 @@ public class KStreamKStreamSelfJoinTest {
 
             // Then:
             processor.checkAndClearProcessResult(expected.toArray(new KeyValueTimestamp[0]));
+        }
+    }
+
+    /**
+     * Configures the DSL store format to use headers if enabled.
+     * This is a helper method to reduce boilerplate in parameterized tests that test both
+     * with and without headers mode.
+     *
+     * @param withHeaders Whether to enable headers mode
+     */
+    private void setDslStoreFormat(final boolean withHeaders) {
+        if (withHeaders) {
+            props.put(StreamsConfig.DSL_STORE_FORMAT_CONFIG, StreamsConfig.DSL_STORE_FORMAT_HEADERS);
+        } else {
+            props.put(StreamsConfig.DSL_STORE_FORMAT_CONFIG, StreamsConfig.DSL_STORE_FORMAT_DEFAULT);
         }
     }
 }

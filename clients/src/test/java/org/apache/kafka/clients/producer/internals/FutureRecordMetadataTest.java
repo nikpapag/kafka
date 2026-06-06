@@ -16,8 +16,9 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
-import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.record.internal.RecordBatch;
 import org.apache.kafka.common.utils.MockTime;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.ExecutionException;
