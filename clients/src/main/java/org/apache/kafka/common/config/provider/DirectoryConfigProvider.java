@@ -18,12 +18,12 @@ package org.apache.kafka.common.config.provider;
 
 import org.apache.kafka.common.config.ConfigData;
 import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.config.internals.AllowedPaths;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -32,7 +32,6 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static java.util.Collections.emptyMap;
 
 /**
  * An implementation of {@link ConfigProvider} based on a directory of files.
@@ -44,8 +43,15 @@ public class DirectoryConfigProvider implements ConfigProvider {
 
     private static final Logger log = LoggerFactory.getLogger(DirectoryConfigProvider.class);
 
+    public static final String ALLOWED_PATHS_CONFIG = "allowed.paths";
+    public static final String ALLOWED_PATHS_DOC = "A comma separated list of paths that this config provider is " +
+            "allowed to access. If not set, all paths are allowed.";
+    private volatile AllowedPaths allowedPaths;
+
     @Override
-    public void configure(Map<String, ?> configs) { }
+    public void configure(Map<String, ?> configs) {
+        allowedPaths = new AllowedPaths((String) configs.getOrDefault(ALLOWED_PATHS_CONFIG, null));
+    }
 
     @Override
     public void close() throws IOException { }
@@ -75,10 +81,20 @@ public class DirectoryConfigProvider implements ConfigProvider {
                         && keys.contains(pathname.getFileName().toString()));
     }
 
-    private static ConfigData get(String path, Predicate<Path> fileFilter) {
-        Map<String, String> map = emptyMap();
+    private ConfigData get(String path, Predicate<Path> fileFilter) {
+        if (allowedPaths == null) {
+            throw new IllegalStateException("The provider has not been configured yet.");
+        }
+
+        Map<String, String> map = Map.of();
+
         if (path != null && !path.isEmpty()) {
-            Path dir = new File(path).toPath();
+            Path dir = allowedPaths.parseUntrustedPath(path);
+            if (dir == null) {
+                log.warn("The path {} is not allowed to be accessed", path);
+                return new ConfigData(map);
+            }
+
             if (!Files.isDirectory(dir)) {
                 log.warn("The path {} is not a directory", path);
             } else {
@@ -99,7 +115,7 @@ public class DirectoryConfigProvider implements ConfigProvider {
 
     private static String read(Path path) {
         try {
-            return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+            return Files.readString(path);
         } catch (IOException e) {
             log.error("Could not read file {} for property {}", path, path.getFileName(), e);
             throw new ConfigException("Could not read file " + path + " for property " + path.getFileName());
