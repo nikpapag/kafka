@@ -20,11 +20,12 @@ import org.apache.kafka.common.serialization.Serde
 import org.apache.kafka.streams.kstream.{StreamJoined => StreamJoinedJ}
 import org.apache.kafka.streams.state.WindowBytesStoreSupplier
 
+@deprecated("Use `org.apache.kafka.streams.kstream.StreamJoined` instead", "4.3.0")
 object StreamJoined {
 
   /**
-   * Create an instance of [[StreamJoined]] with key, value, and otherValue [[Serde]]
-   * instances.
+   * Create an instance of [[StreamJoined]] with key, value, and otherValue
+   * `org.apache.kafka.common.serialization.Serde` instances.
    * `null` values are accepted and will be replaced by the default serdes as defined in config.
    *
    * @tparam K              key type
@@ -44,8 +45,8 @@ object StreamJoined {
 
   /**
    * Create an instance of [[StreamJoined]] with store suppliers for the calling stream
-   * and the other stream.  Also adds the key, value, and otherValue [[Serde]]
-   * instances.
+   * and the other stream.  Also adds the key, value, and otherValue
+   * `org.apache.kafka.common.serialization.Serde` instances.
    * `null` values are accepted and will be replaced by the default serdes as defined in config.
    *
    * @tparam K key type
@@ -70,8 +71,8 @@ object StreamJoined {
 
   /**
    * Create an instance of [[StreamJoined]] with the name used for naming
-   * the state stores involved in the join.  Also adds the key, value, and otherValue [[Serde]]
-   * instances.
+   * the state stores involved in the join.  Also adds the key, value, and otherValue
+   * `org.apache.kafka.common.serialization.Serde` instances.
    * `null` values are accepted and will be replaced by the default serdes as defined in config.
    *
    * @tparam K key type

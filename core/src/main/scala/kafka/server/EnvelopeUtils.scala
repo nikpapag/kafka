@@ -19,22 +19,24 @@ package kafka.server
 
 import java.net.{InetAddress, UnknownHostException}
 import java.nio.ByteBuffer
-
-import kafka.network.RequestChannel
 import org.apache.kafka.common.errors.{InvalidRequestException, PrincipalDeserializationException, UnsupportedVersionException}
 import org.apache.kafka.common.network.ClientInformation
 import org.apache.kafka.common.requests.{EnvelopeRequest, RequestContext, RequestHeader}
 import org.apache.kafka.common.security.auth.KafkaPrincipal
+import org.apache.kafka.network.Request
+import org.apache.kafka.network.metrics.RequestChannelMetrics
 
-import scala.compat.java8.OptionConverters._
+import java.util.Optional
+import scala.jdk.OptionConverters.RichOptional
+
 
 object EnvelopeUtils {
   def handleEnvelopeRequest(
-    request: RequestChannel.Request,
-    requestChannelMetrics: RequestChannel.Metrics,
-    handler: RequestChannel.Request => Unit
+    request: Request,
+    requestChannelMetrics: RequestChannelMetrics,
+    handler: Request => Unit
   ): Unit = {
-    val envelope = request.body[EnvelopeRequest]
+    val envelope = request.body(classOf[EnvelopeRequest])
     val forwardedPrincipal = parseForwardedPrincipal(request.context, envelope.requestPrincipal)
     val forwardedClientAddress = parseForwardedClientAddress(envelope.clientAddress)
 
@@ -78,23 +80,23 @@ object EnvelopeUtils {
   }
 
   private def parseForwardedRequest(
-    envelope: RequestChannel.Request,
+    envelope: Request,
     forwardedContext: RequestContext,
     buffer: ByteBuffer,
-    requestChannelMetrics: RequestChannel.Metrics
-  ): RequestChannel.Request = {
+    requestChannelMetrics: RequestChannelMetrics
+  ): Request = {
     try {
-      val forwardedRequest = new RequestChannel.Request(
-        processor = envelope.processor,
-        context = forwardedContext,
-        startTimeNanos = envelope.startTimeNanos,
+      val forwardedRequest = new Request(
+        envelope.processor,
+        forwardedContext,
+        envelope.startTimeNanos,
         envelope.memoryPool,
         buffer,
         requestChannelMetrics,
-        Some(envelope)
+        Optional.of(envelope)
       )
       // set the dequeue time of forwardedRequest as the value of envelope request
-      forwardedRequest.requestDequeueTimeNanos = envelope.requestDequeueTimeNanos
+      forwardedRequest.requestDequeueTimeNanos(envelope.requestDequeueTimeNanos)
       forwardedRequest
     } catch {
       case e: InvalidRequestException =>
@@ -124,7 +126,7 @@ object EnvelopeUtils {
     envelopeContext: RequestContext,
     principalBytes: Array[Byte]
   ): KafkaPrincipal = {
-    envelopeContext.principalSerde.asScala match {
+    envelopeContext.principalSerde.toScala match {
       case Some(serde) =>
         try {
           serde.deserialize(principalBytes)
