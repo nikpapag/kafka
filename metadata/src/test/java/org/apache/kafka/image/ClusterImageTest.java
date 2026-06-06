@@ -19,134 +19,127 @@ package org.apache.kafka.image;
 
 import org.apache.kafka.common.Endpoint;
 import org.apache.kafka.common.Uuid;
-import org.apache.kafka.common.metadata.BrokerRegistrationChangeRecord;
-import org.apache.kafka.common.metadata.FenceBrokerRecord;
-import org.apache.kafka.common.metadata.UnfenceBrokerRecord;
-import org.apache.kafka.common.metadata.UnregisterBrokerRecord;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
-import org.apache.kafka.metadata.BrokerRegistration;
-import org.apache.kafka.metadata.BrokerRegistrationInControlledShutdownChange;
+import org.apache.kafka.image.writer.ImageWriterOptions;
+import org.apache.kafka.image.writer.RecordListWriter;
+import org.apache.kafka.metadata.ControllerRegistration;
 import org.apache.kafka.metadata.RecordTestUtils;
-import org.apache.kafka.metadata.VersionRange;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.MetadataVersion;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
-import static org.apache.kafka.common.metadata.MetadataRecordType.FENCE_BROKER_RECORD;
-import static org.apache.kafka.common.metadata.MetadataRecordType.UNFENCE_BROKER_RECORD;
-import static org.apache.kafka.common.metadata.MetadataRecordType.UNREGISTER_BROKER_RECORD;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 
 @Timeout(value = 40)
 public class ClusterImageTest {
-    public final static ClusterImage IMAGE1;
 
-    static final List<ApiMessageAndVersion> DELTA1_RECORDS;
+    public static final ClusterImage IMAGE1 = ClusterImageFixtures.IMAGE1;
 
-    final static ClusterDelta DELTA1;
+    static final List<ApiMessageAndVersion> DELTA1_RECORDS = ClusterImageFixtures.DELTA1_RECORDS;
 
-    final static ClusterImage IMAGE2;
+    static final ClusterDelta DELTA1 = ClusterImageFixtures.DELTA1;
 
-    static {
-        Map<Integer, BrokerRegistration> map1 = new HashMap<>();
-        map1.put(0, new BrokerRegistration(0,
-            1000,
-            Uuid.fromString("vZKYST0pSA2HO5x_6hoO2Q"),
-            Arrays.asList(new Endpoint("PLAINTEXT", SecurityProtocol.PLAINTEXT, "localhost", 9092)),
-            Collections.singletonMap("foo", VersionRange.of((short) 1, (short) 3)),
-            Optional.empty(),
-            true,
-            false));
-        map1.put(1, new BrokerRegistration(1,
-            1001,
-            Uuid.fromString("U52uRe20RsGI0RvpcTx33Q"),
-            Arrays.asList(new Endpoint("PLAINTEXT", SecurityProtocol.PLAINTEXT, "localhost", 9093)),
-            Collections.singletonMap("foo", VersionRange.of((short) 1, (short) 3)),
-            Optional.empty(),
-            false,
-            false));
-        map1.put(2, new BrokerRegistration(2,
-            123,
-            Uuid.fromString("hr4TVh3YQiu3p16Awkka6w"),
-            Arrays.asList(new Endpoint("PLAINTEXT", SecurityProtocol.PLAINTEXT, "localhost", 9093)),
-            Collections.emptyMap(),
-            Optional.of("arack"),
-            false,
-            false));
-        IMAGE1 = new ClusterImage(map1);
+    static final ClusterImage IMAGE2 = ClusterImageFixtures.IMAGE2;
 
-        DELTA1_RECORDS = new ArrayList<>();
-        DELTA1_RECORDS.add(new ApiMessageAndVersion(new UnfenceBrokerRecord().
-            setId(0).setEpoch(1000), UNFENCE_BROKER_RECORD.highestSupportedVersion()));
-        DELTA1_RECORDS.add(new ApiMessageAndVersion(new FenceBrokerRecord().
-            setId(1).setEpoch(1001), FENCE_BROKER_RECORD.highestSupportedVersion()));
-        DELTA1_RECORDS.add(new ApiMessageAndVersion(new BrokerRegistrationChangeRecord().
-            setBrokerId(0).setBrokerEpoch(1000).setInControlledShutdown(
-                BrokerRegistrationInControlledShutdownChange.IN_CONTROLLED_SHUTDOWN.value()),
-            FENCE_BROKER_RECORD.highestSupportedVersion()));
-        DELTA1_RECORDS.add(new ApiMessageAndVersion(new UnregisterBrokerRecord().
-            setBrokerId(2).setBrokerEpoch(123),
-            UNREGISTER_BROKER_RECORD.highestSupportedVersion()));
+    static final List<ApiMessageAndVersion> DELTA2_RECORDS = ClusterImageFixtures.DELTA2_RECORDS;
 
-        DELTA1 = new ClusterDelta(IMAGE1);
-        RecordTestUtils.replayAll(DELTA1, DELTA1_RECORDS);
+    static final ClusterDelta DELTA2 = ClusterImageFixtures.DELTA2;
 
-        Map<Integer, BrokerRegistration> map2 = new HashMap<>();
-        map2.put(0, new BrokerRegistration(0,
-            1000,
-            Uuid.fromString("vZKYST0pSA2HO5x_6hoO2Q"),
-            Arrays.asList(new Endpoint("PLAINTEXT", SecurityProtocol.PLAINTEXT, "localhost", 9092)),
-            Collections.singletonMap("foo", VersionRange.of((short) 1, (short) 3)),
-            Optional.empty(),
-            false,
-            true));
-        map2.put(1, new BrokerRegistration(1,
-            1001,
-            Uuid.fromString("U52uRe20RsGI0RvpcTx33Q"),
-            Arrays.asList(new Endpoint("PLAINTEXT", SecurityProtocol.PLAINTEXT, "localhost", 9093)),
-            Collections.singletonMap("foo", VersionRange.of((short) 1, (short) 3)),
-            Optional.empty(),
-            true,
-            false));
-        IMAGE2 = new ClusterImage(map2);
+    static final ClusterImage IMAGE3 = ClusterImageFixtures.IMAGE3;
+
+    @Test
+    public void testEmptyImageRoundTrip() {
+        testToImage(ClusterImage.EMPTY);
     }
 
     @Test
-    public void testEmptyImageRoundTrip() throws Throwable {
-        testToImageAndBack(ClusterImage.EMPTY);
+    public void testImage1RoundTrip() {
+        testToImage(IMAGE1);
     }
 
     @Test
-    public void testImage1RoundTrip() throws Throwable {
-        testToImageAndBack(IMAGE1);
-    }
-
-    @Test
-    public void testApplyDelta1() throws Throwable {
+    public void testApplyDelta1() {
         assertEquals(IMAGE2, DELTA1.apply());
+        // check image1 + delta1 = image2, since records for image1 + delta1 might differ from records from image2
+        List<ApiMessageAndVersion> records = getImageRecords(IMAGE1);
+        records.addAll(DELTA1_RECORDS);
+        testToImage(IMAGE2, records);
     }
 
     @Test
-    public void testImage2RoundTrip() throws Throwable {
-        testToImageAndBack(IMAGE2);
+    public void testImage2RoundTrip() {
+        testToImage(IMAGE2);
     }
 
-    private void testToImageAndBack(ClusterImage image) throws Throwable {
-        MockSnapshotConsumer writer = new MockSnapshotConsumer();
-        image.write(writer, MetadataVersion.latest());
-        ClusterDelta delta = new ClusterDelta(ClusterImage.EMPTY);
-        RecordTestUtils.replayAllBatches(delta, writer.batches());
-        ClusterImage nextImage = delta.apply();
-        assertEquals(image, nextImage);
+    @Test
+    public void testApplyDelta2() {
+        assertEquals(IMAGE3, DELTA2.apply());
+        // check image2 + delta2 = image3, since records for image2 + delta2 might differ from records from image3
+        List<ApiMessageAndVersion> records = getImageRecords(IMAGE2);
+        records.addAll(DELTA2_RECORDS);
+        testToImage(IMAGE3, records);
     }
+
+    @Test
+    public void testImage3RoundTrip() {
+        testToImage(IMAGE3);
+    }
+
+    private static void testToImage(ClusterImage image) {
+        testToImage(image, Optional.empty());
+    }
+
+    private static void testToImage(ClusterImage image, Optional<List<ApiMessageAndVersion>> fromRecords) {
+        testToImage(image, fromRecords.orElseGet(() -> getImageRecords(image)));
+    }
+
+    private static void testToImage(ClusterImage image, List<ApiMessageAndVersion> fromRecords) {
+        // test from empty image stopping each of the various intermediate images along the way
+        new RecordTestUtils.TestThroughAllIntermediateImagesLeadingToFinalImageHelper<>(
+            () -> ClusterImage.EMPTY,
+            ClusterDelta::new
+        ).test(image, fromRecords);
+    }
+
+    private static List<ApiMessageAndVersion> getImageRecords(ClusterImage image) {
+        RecordListWriter writer = new RecordListWriter();
+        image.write(writer, new ImageWriterOptions.Builder(MetadataVersion.latestProduction()).build());
+        return writer.records();
+    }
+
+    @Test
+    public void testHandleLossOfControllerRegistrations() {
+        ClusterImage testImage = new ClusterImage(Map.of(),
+            Map.of(1000, new ControllerRegistration.Builder().
+                setId(1000).
+                setIncarnationId(Uuid.fromString("9ABu6HEgRuS-hjHLgC4cHw")).
+                setListeners(Map.of("PLAINTEXT",
+                    new Endpoint("PLAINTEXT", SecurityProtocol.PLAINTEXT, "localhost", 19092))).
+                setSupportedFeatures(Map.of()).build()));
+        RecordListWriter writer = new RecordListWriter();
+        final AtomicReference<String> lossString = new AtomicReference<>("");
+        testImage.write(writer, new ImageWriterOptions.Builder(MetadataVersion.IBP_3_6_IV2).
+            setLossHandler(loss -> lossString.compareAndSet("", loss.loss())).
+                build());
+        assertEquals("controller registration data", lossString.get());
+    }
+
+    @Test
+    public void testBrokerEpoch() {
+        assertEquals(123L, IMAGE1.brokerEpoch(2));
+    }
+
+    @Test
+    public void testBrokerEpochForNonExistentBroker() {
+        assertEquals(-1L, IMAGE1.brokerEpoch(20));
+    }
+
 }

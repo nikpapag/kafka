@@ -21,9 +21,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -87,8 +85,7 @@ public final class FieldSpec {
             throw new RuntimeException("You must specify the version of the " +
                 name + " structure.");
         }
-        this.fields = Collections.unmodifiableList(fields == null ?
-            Collections.emptyList() : new ArrayList<>(fields));
+        this.fields = fields == null ? List.of() : List.copyOf(fields);
         this.type = FieldType.parse(Objects.requireNonNull(type));
         this.mapKey = mapKey;
         this.nullableVersions = Versions.parse(nullableVersions, Versions.NONE);
@@ -106,6 +103,13 @@ public final class FieldSpec {
         if (!this.fields().isEmpty()) {
             if (!this.type.isArray() && !this.type.isStruct()) {
                 throw new RuntimeException("Non-array or Struct field " + name + " cannot have fields");
+            }
+            // Check struct invariants
+            if (this.type.isStruct() || this.type.isStructArray()) {
+                new StructSpec(name,
+                    versions,
+                    Versions.NONE_STRING, // version deprecations not supported at field level
+                    fields);
             }
         }
 
@@ -254,7 +258,7 @@ public final class FieldSpec {
 
     @JsonProperty("flexibleVersions")
     public String flexibleVersionsString() {
-        return flexibleVersions.isPresent() ? flexibleVersions.get().toString() : null;
+        return flexibleVersions.map(Versions::toString).orElse(null);
     }
 
     public Optional<Versions> flexibleVersions() {
@@ -446,11 +450,15 @@ public final class FieldSpec {
         } else if (type.isRecords()) {
             return "null";
         } else if (type.isStruct()) {
-            if (!fieldDefault.isEmpty()) {
+            if (fieldDefault.equals("null")) {
+                validateNullDefault();
+                return "null";
+            } else if (!fieldDefault.isEmpty()) {
                 throw new RuntimeException("Invalid default for struct field " +
-                    name + ": custom defaults are not supported for struct fields.");
+                    name + ".  The only valid default for a struct field " +
+                    "is the empty struct or null.");
             }
-            return "new " + type.toString() + "()";
+            return "new " + type + "()";
         } else if (type.isArray()) {
             if (fieldDefault.equals("null")) {
                 validateNullDefault();

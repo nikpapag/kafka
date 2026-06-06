@@ -43,7 +43,7 @@
 
 package org.apache.kafka.trogdor.coordinator;
 
-import org.apache.kafka.common.utils.ThreadUtils;
+import org.apache.kafka.common.utils.internals.ThreadUtils;
 import org.apache.kafka.trogdor.agent.AgentClient;
 import org.apache.kafka.trogdor.common.Node;
 import org.apache.kafka.trogdor.rest.AgentStatusResponse;
@@ -56,6 +56,7 @@ import org.apache.kafka.trogdor.rest.WorkerStarting;
 import org.apache.kafka.trogdor.rest.WorkerState;
 import org.apache.kafka.trogdor.rest.WorkerStopping;
 import org.apache.kafka.trogdor.task.TaskSpec;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -149,7 +150,7 @@ public final class NodeManager {
     private final NodeHeartbeat heartbeat;
 
     /**
-     * A future which can be used to cancel the periodic hearbeat task.
+     * A future which can be used to cancel the periodic heartbeat task.
      */
     private ScheduledFuture<?> heartbeatFuture;
 
@@ -189,7 +190,7 @@ public final class NodeManager {
         public void run() {
             rescheduleNextHeartbeat(HEARTBEAT_DELAY_MS);
             try {
-                AgentStatusResponse agentStatus = null;
+                AgentStatusResponse agentStatus;
                 try {
                     agentStatus = client.status();
                 } catch (ConnectException e) {
@@ -384,4 +385,4 @@ public final class NodeManager {
     public void waitForShutdown() throws InterruptedException {
         executor.awaitTermination(1, TimeUnit.DAYS);
     }
-};
+}
