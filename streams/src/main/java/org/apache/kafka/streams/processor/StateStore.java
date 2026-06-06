@@ -16,16 +16,18 @@
  */
 package org.apache.kafka.streams.processor;
 
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.annotation.InterfaceStability.Evolving;
 import org.apache.kafka.streams.errors.StreamsException;
 import org.apache.kafka.streams.processor.api.ProcessorContext;
-import org.apache.kafka.streams.processor.internals.StoreToProcessorContextAdapter;
 import org.apache.kafka.streams.query.FailureReason;
 import org.apache.kafka.streams.query.Position;
 import org.apache.kafka.streams.query.PositionBound;
 import org.apache.kafka.streams.query.Query;
 import org.apache.kafka.streams.query.QueryConfig;
 import org.apache.kafka.streams.query.QueryResult;
+
+import java.util.Map;
 
 /**
  * A storage engine for managing state maintained by a stream processor.
@@ -57,32 +59,7 @@ public interface StateStore {
     /**
      * Initializes this state store.
      * <p>
-     * The implementation of this function must register the root store in the context via the
-     * {@link org.apache.kafka.streams.processor.ProcessorContext#register(StateStore, StateRestoreCallback)} function,
-     * where the first {@link StateStore} parameter should always be the passed-in {@code root} object, and
-     * the second parameter should be an object of user's implementation
-     * of the {@link StateRestoreCallback} interface used for restoring the state store from the changelog.
-     * <p>
-     * Note that if the state store engine itself supports bulk writes, users can implement another
-     * interface {@link BatchingStateRestoreCallback} which extends {@link StateRestoreCallback} to
-     * let users implement bulk-load restoration logic instead of restoring one record at a time.
-     * <p>
-     * This method is not called if {@link StateStore#init(StateStoreContext, StateStore)}
-     * is implemented.
-     *
-     * @throws IllegalStateException If store gets registered after initialized is already finished
-     * @throws StreamsException if the store's change log does not contain the partition
-     * @deprecated Since 2.7.0. Callers should invoke {@link #init(StateStoreContext, StateStore)} instead.
-     *             Implementers may choose to implement this method for backward compatibility or to throw an
-     *             informative exception instead.
-     */
-    @Deprecated
-    void init(org.apache.kafka.streams.processor.ProcessorContext context, StateStore root);
-
-    /**
-     * Initializes this state store.
-     * <p>
-     * The implementation of this function must register the root store in the context via the
+     * The implementation of this function must register the root store in the stateStoreContext via the
      * {@link StateStoreContext#register(StateStore, StateRestoreCallback, CommitCallback)} function, where the
      * first {@link StateStore} parameter should always be the passed-in {@code root} object, and
      * the second parameter should be an object of user's implementation
@@ -95,14 +72,70 @@ public interface StateStore {
      * @throws IllegalStateException If store gets registered after initialized is already finished
      * @throws StreamsException if the store's change log does not contain the partition
      */
-    default void init(final StateStoreContext context, final StateStore root) {
-        init(StoreToProcessorContextAdapter.adapt(context), root);
-    }
+    void init(final StateStoreContext stateStoreContext, final StateStore root);
 
     /**
      * Flush any cached data
+     *
+     * @deprecated Use {@link org.apache.kafka.streams.processor.api.ProcessingContext#commit() ProcessorContext#commit()}
+     *             instead.
      */
-    void flush();
+    @Deprecated
+    default void flush() {
+        // no-op
+    }
+
+    /**
+     * Commit all written records to this StateStore.
+     * <p>
+     * This method <b>CANNOT</b> be called by users from {@link org.apache.kafka.streams.processor.api.Processor
+     * processors}. Doing so will throw an {@link java.lang.UnsupportedOperationException}.
+     * <p>
+     * Instead, users should call {@link org.apache.kafka.streams.processor.api.ProcessingContext#commit()
+     * ProcessorContext#commit()} to request a Task commit.
+     * <p>
+     * If {@link #managesOffsets()} returns {@code true}, the given {@code changelogOffsets} will be guaranteed to be
+     * persisted to disk along with the written records.
+     * <p>
+     * {@code changelogOffsets} will usually contain a single partition, in the case of a regular StateStore. However,
+     * they may contain multiple partitions in the case of a Global StateStore with multiple partitions. All provided
+     * partitions <em>MUST</em> be persisted to disk.
+     * <p>
+     * Implementations <em>SHOULD</em> ensure that {@code changelogOffsets} are committed to disk atomically with the
+     * records they represent, if possible.
+     * <p>
+     * <b>Empty map:</b> If {@code changelogOffsets} is empty, implementations that manage offsets <em>MUST</em>
+     * remove all previously committed offsets. After an empty commit, {@link #committedOffset(TopicPartition)} should
+     * return {@code null} for all partitions. This is used during corruption recovery to clear stale offsets so that
+     * restoration can restart from the beginning.
+     * <p>
+     * <b>Null values:</b> If a value in {@code changelogOffsets} is {@code null}, implementations that manage offsets
+     * <em>MUST</em> remove the committed offset for that partition. After such a commit,
+     * {@link #committedOffset(TopicPartition)} should return {@code null} for the affected partition.
+     *
+     * @param changelogOffsets The changelog offset(s) corresponding to the most recently written records.
+     *                         An empty map signals that all committed offsets should be cleared.
+     *                         A {@code null} value for a partition signals that its committed offset should be removed.
+     */
+    default void commit(final Map<TopicPartition, Long> changelogOffsets) {
+        flush();
+    }
+
+    /**
+     * Returns the most recently {@link #commit(Map) committed} offset for the given {@link TopicPartition}.
+     * <p>
+     * If {@link #managesOffsets()} and {@link #persistent()} both return {@code true}, this method will return the
+     * offset that corresponds to the changelog record most recently written to this store, for the given {@code
+     * partition}.
+     *
+     * @param partition The partition to get the committed offset for.
+     * @return The last {@link #commit(Map) committed} offset for the {@code partition}; or {@code null} if no offset
+     *         has been committed for the partition, or if either {@link #persistent()} or {@link #managesOffsets()}
+     *         return {@code false}.
+     */
+    default Long committedOffset(final TopicPartition partition) {
+        return null;
+    }
 
     /**
      * Close the storage engine.
@@ -120,6 +153,32 @@ public interface StateStore {
      * @return  {@code true} if the storage is persistent&mdash;{@code false} otherwise
      */
     boolean persistent();
+
+    /**
+     * Determines if this StateStore manages its own offsets.
+     * <p>
+     * If this method returns {@code true}, then offsets provided to {@link #commit(Map)} will be retrievable using
+     * {@link #committedOffset(TopicPartition)}.
+     * <p>
+     * If this method returns {@code false}, offsets provided to {@link #commit(Map)} will be ignored, and {@link
+     * #committedOffset(TopicPartition)} will be expected to always return {@code null}.
+     * <p>
+     * This method is provided to enable custom StateStores to opt-in to managing their own offsets. This is required,
+     * to ensure that custom StateStores provide the consistency guarantees that Kafka Streams expects when operating
+     * under an {@code exactly-once} {@code processing.guarantee}.
+     * <p>
+     * New implementations are required to implement this method and return {@code true}. Existing implementations
+     * should upgrade to managing their own offsets as soon as possible, as the legacy offset management is deprecated
+     * and will be removed in a future version.
+     *
+     * @deprecated New implementations should always return {@code true} and manage their own offsets. In the future,
+     *             this method will be removed and it will be assumed to always return {@code true}.
+     * @return Whether this StateStore manages its own offsets.
+     */
+    @Deprecated
+    default boolean managesOffsets() {
+        return false;
+    }
 
     /**
      * Is this store open for reading and writing

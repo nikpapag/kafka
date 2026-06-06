@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.streams.state;
 
+import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.serialization.Serializer;
 import org.apache.kafka.streams.errors.InvalidStateStoreException;
 
@@ -48,13 +49,13 @@ public interface ReadOnlyKeyValueStore<K, V> {
      * Get an iterator over a given range of keys. This iterator must be closed after use.
      * The returned iterator must be safe from {@link java.util.ConcurrentModificationException}s
      * and must not return null values.
-     * Order is not guaranteed as bytes lexicographical ordering might not represent key order.
+     * Order is based on the serialized byte[] of the keys, not the 'logical' key order.
      *
      * @param from The first key that could be in the range, where iteration starts from.
      *             A null value indicates that the range starts with the first element in the store.
      * @param to   The last key that could be in the range, where iteration ends.
      *             A null value indicates that the range ends with the last element in the store.
-     * @return The iterator for this range, from smallest to largest bytes.
+     * @return The iterator for this range, from key with the smallest bytes to the key with the largest bytes of keys.
      * @throws InvalidStateStoreException if the store is not initialized
      */
     KeyValueIterator<K, V> range(K from, K to);
@@ -63,16 +64,16 @@ public interface ReadOnlyKeyValueStore<K, V> {
      * Get a reverse iterator over a given range of keys. This iterator must be closed after use.
      * The returned iterator must be safe from {@link java.util.ConcurrentModificationException}s
      * and must not return null values.
-     * Order is not guaranteed as bytes lexicographical ordering might not represent key order.
+     * Order is based on the serialized byte[] of the keys, not the 'logical' key order.
      *
      * @param from The first key that could be in the range, where iteration ends.
      *             A null value indicates that the range starts with the first element in the store.
      * @param to   The last key that could be in the range, where iteration starts from.
      *             A null value indicates that the range ends with the last element in the store.
-     * @return The reverse iterator for this range, from largest to smallest key bytes.
+     * @return The iterator for this range, from key with the smallest bytes to the key with the largest bytes of keys.
      * @throws InvalidStateStoreException if the store is not initialized
      */
-    default KeyValueIterator<K, V> reverseRange(K from, K to) {
+    default KeyValueIterator<K, V> reverseRange(final K from, final K to) {
         throw new UnsupportedOperationException();
     }
 
@@ -93,7 +94,7 @@ public interface ReadOnlyKeyValueStore<K, V> {
      * and must not return null values.
      * Order is not guaranteed as bytes lexicographical ordering might not represent key order.
      *
-     * @return An reverse iterator of all key/value pairs in the store, from largest to smallest key bytes.
+     * @return A reverse iterator of all key/value pairs in the store, from largest to smallest key bytes.
      * @throws InvalidStateStoreException if the store is not initialized
      */
     default KeyValueIterator<K, V> reverseAll() {
@@ -117,8 +118,9 @@ public interface ReadOnlyKeyValueStore<K, V> {
      * @param <PS> Prefix Serializer type
      * @param <P> Prefix Type.
      * @return The iterator for keys having the specified prefix.
+     * @throws InvalidStateStoreException if the store is not initialized
      */
-    default <PS extends Serializer<P>, P> KeyValueIterator<K, V> prefixScan(P prefix, PS prefixKeySerializer) {
+    default <PS extends Serializer<P>, P> KeyValueIterator<K, V> prefixScan(final P prefix, final PS prefixKeySerializer) {
         throw new UnsupportedOperationException();
     }
 
@@ -132,4 +134,24 @@ public interface ReadOnlyKeyValueStore<K, V> {
      * @throws InvalidStateStoreException if the store is not initialized
      */
     long approximateNumEntries();
+
+    /**
+     * Return a read-only view of this store bound to the given {@link IsolationLevel}.
+     * <p>
+     * For stores without a transaction buffer (i.e. when {@code enable.transactional.statestores}
+     * is {@code false}), the default implementation returns {@code this} — the isolation level has
+     * no observable effect. Transactional stores override this method to return a view that
+     * either consults the transaction buffer ({@code READ_UNCOMMITTED}) or reads directly from
+     * the underlying committed data ({@code READ_COMMITTED}).
+     * <p>
+     * Wrapping store implementations propagate {@code readOnly} to their inner store so that
+     * transformations such as serdes or metrics are applied on top of the isolation-level-aware
+     * view.
+     *
+     * @param isolationLevel the isolation level the returned view should use for reads.
+     * @return a read-only view of this store using the given isolation level.
+     */
+    default ReadOnlyKeyValueStore<K, V> readOnly(final IsolationLevel isolationLevel) {
+        return this;
+    }
 }
