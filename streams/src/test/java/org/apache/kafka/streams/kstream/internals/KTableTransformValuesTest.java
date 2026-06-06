@@ -42,38 +42,47 @@ import org.apache.kafka.streams.processor.internals.ProcessorRecordContext;
 import org.apache.kafka.streams.state.KeyValueStore;
 import org.apache.kafka.streams.state.StoreBuilder;
 import org.apache.kafka.streams.state.Stores;
-import org.apache.kafka.streams.state.TimestampedKeyValueStore;
+import org.apache.kafka.streams.state.TimestampedKeyValueStoreWithHeaders;
 import org.apache.kafka.streams.state.ValueAndTimestamp;
+import org.apache.kafka.streams.state.ValueTimestampHeaders;
 import org.apache.kafka.test.MockProcessorSupplier;
 import org.apache.kafka.test.MockReducer;
 import org.apache.kafka.test.NoOpValueTransformerWithKeySupplier;
+import org.apache.kafka.test.StreamsTestUtils;
 import org.apache.kafka.test.TestUtils;
-import org.easymock.EasyMockRunner;
-import org.easymock.Mock;
-import org.easymock.MockType;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 
-import static org.easymock.EasyMock.anyBoolean;
-import static org.easymock.EasyMock.expect;
-import static org.easymock.EasyMock.expectLastCall;
-import static org.easymock.EasyMock.replay;
-import static org.easymock.EasyMock.verify;
+import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.hasItems;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.isA;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-@RunWith(EasyMockRunner.class)
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.STRICT_STUBS)
 @SuppressWarnings("deprecation") // Old PAPI. Needs to be migrated.
 public class KTableTransformValuesTest {
     private static final String QUERYABLE_NAME = "queryable-store";
@@ -84,24 +93,24 @@ public class KTableTransformValuesTest {
     private static final Consumed<String, String> CONSUMED = Consumed.with(Serdes.String(), Serdes.String());
 
     private TopologyTestDriver driver;
-    private MockProcessorSupplier<String, String> capture;
+    private MockProcessorSupplier<String, String, Void, Void> capture;
     private StreamsBuilder builder;
-    @Mock(MockType.NICE)
+    @Mock
     private KTableImpl<String, String, String> parent;
-    @Mock(MockType.NICE)
+    @Mock
     private InternalProcessorContext<String, Change<String>> context;
-    @Mock(MockType.NICE)
+    @Mock
     private KTableValueGetterSupplier<String, String> parentGetterSupplier;
-    @Mock(MockType.NICE)
+    @Mock
     private KTableValueGetter<String, String> parentGetter;
-    @Mock(MockType.NICE)
-    private TimestampedKeyValueStore<String, String> stateStore;
-    @Mock(MockType.NICE)
+    @Mock
+    private TimestampedKeyValueStoreWithHeaders<String, String> stateStore;
+    @Mock
     private ValueTransformerWithKeySupplier<String, String, String> mockSupplier;
-    @Mock(MockType.NICE)
+    @Mock
     private ValueTransformerWithKey<String, String, String> transformer;
 
-    @After
+    @AfterEach
     public void cleanup() {
         if (driver != null) {
             driver.close();
@@ -109,7 +118,7 @@ public class KTableTransformValuesTest {
         }
     }
 
-    @Before
+    @BeforeEach
     public void setUp() {
         capture = new MockProcessorSupplier<>();
         builder = new StreamsBuilder();
@@ -162,13 +171,9 @@ public class KTableTransformValuesTest {
         final Processor<String, Change<String>, String, Change<String>> processor = transformValues.get();
         processor.init(context);
 
-        context.forward(new Record<>("Key", new Change<>("Key->newValue!", null), 0));
-        expectLastCall();
-        replay(context);
+        doNothing().when(context).forward(new Record<>("Key", new Change<>("Key->newValue!", null), 0));
 
         processor.process(new Record<>("Key", new Change<>("newValue", "oldValue"), 0));
-
-        verify(context);
     }
 
     @Test
@@ -176,43 +181,29 @@ public class KTableTransformValuesTest {
         final KTableTransformValues<String, String, String> transformValues =
             new KTableTransformValues<>(parent, new ExclamationValueTransformerSupplier(), null);
 
-        expect(parent.enableSendingOldValues(true)).andReturn(true);
-        replay(parent);
+        when(parent.enableSendingOldValues(true)).thenReturn(true);
 
         transformValues.enableSendingOldValues(true);
         final Processor<String, Change<String>, String, Change<String>> processor = transformValues.get();
         processor.init(context);
 
-        context.forward(new Record<>("Key", new Change<>("Key->newValue!", "Key->oldValue!"), 0));
-        expectLastCall();
-        replay(context);
+        doNothing().when(context).forward(new Record<>("Key", new Change<>("Key->newValue!", "Key->oldValue!"), 0));
 
         processor.process(new Record<>("Key", new Change<>("newValue", "oldValue"), 0));
-
-        verify(context);
     }
 
     @Test
     public void shouldNotSetSendOldValuesOnParentIfMaterialized() {
-        expect(parent.enableSendingOldValues(anyBoolean()))
-            .andThrow(new AssertionError("Should not call enableSendingOldValues"))
-            .anyTimes();
-
-        replay(parent);
-
         new KTableTransformValues<>(parent, new NoOpValueTransformerWithKeySupplier<>(), QUERYABLE_NAME).enableSendingOldValues(true);
 
-        verify(parent);
+        verify(parent, never()).enableSendingOldValues(anyBoolean());
     }
 
     @Test
     public void shouldSetSendOldValuesOnParentIfNotMaterialized() {
-        expect(parent.enableSendingOldValues(true)).andReturn(true);
-        replay(parent);
+        when(parent.enableSendingOldValues(true)).thenReturn(true);
 
         new KTableTransformValues<>(parent, new NoOpValueTransformerWithKeySupplier<>(), null).enableSendingOldValues(true);
-
-        verify(parent);
     }
 
     @Test
@@ -220,9 +211,9 @@ public class KTableTransformValuesTest {
         final KTableTransformValues<String, String, String> transformValues =
             new KTableTransformValues<>(parent, new ExclamationValueTransformerSupplier(), null);
 
-        expect(parent.valueGetterSupplier()).andReturn(parentGetterSupplier);
-        expect(parentGetterSupplier.get()).andReturn(parentGetter);
-        expect(parentGetter.get("Key")).andReturn(ValueAndTimestamp.make("Value", 73L));
+        when(parent.valueGetterSupplier()).thenReturn(parentGetterSupplier);
+        when(parentGetterSupplier.get()).thenReturn(parentGetter);
+        when(parentGetter.get("Key")).thenReturn(ValueTimestampHeaders.make("Value", 73L, new RecordHeaders()));
         final ProcessorRecordContext recordContext = new ProcessorRecordContext(
             42L,
             23L,
@@ -230,18 +221,15 @@ public class KTableTransformValuesTest {
             "foo",
             new RecordHeaders()
         );
-        expect(context.recordContext()).andReturn(recordContext);
-        context.setRecordContext(new ProcessorRecordContext(
+        when(context.recordContext()).thenReturn(recordContext);
+        doNothing().when(context).setRecordContext(new ProcessorRecordContext(
             73L,
             -1L,
             -1,
             null,
             new RecordHeaders()
         ));
-        expectLastCall();
-        context.setRecordContext(recordContext);
-        expectLastCall();
-        replay(parent, parentGetterSupplier, parentGetter, context);
+        doNothing().when(context).setRecordContext(recordContext);
 
         final KTableValueGetter<String, String> getter = transformValues.view().get();
         getter.init(context);
@@ -249,7 +237,43 @@ public class KTableTransformValuesTest {
         final String result = getter.get("Key").value();
 
         assertThat(result, is("Key->Value!"));
-        verify(context);
+    }
+
+    @Test
+    public void shouldUseContextHeadersWhenValueTimestampHeadersIsNull() {
+        final KTableTransformValues<String, String, String> transformValues =
+            new KTableTransformValues<>(parent, new ExclamationValueTransformerSupplier(), null);
+
+        when(parent.valueGetterSupplier()).thenReturn(parentGetterSupplier);
+        when(parentGetterSupplier.get()).thenReturn(parentGetter);
+        when(parentGetter.get("Key")).thenReturn(null);
+
+        final RecordHeaders contextHeaders = new RecordHeaders();
+        contextHeaders.add("test-header", "test-value".getBytes());
+        final ProcessorRecordContext recordContext = new ProcessorRecordContext(
+            42L,
+            23L,
+            -1,
+            "foo",
+            contextHeaders
+        );
+        when(context.recordContext()).thenReturn(recordContext);
+        doNothing().when(context).setRecordContext(new ProcessorRecordContext(
+            -1L,
+            -1L,
+            -1,
+            null,
+            new RecordHeaders()
+        ));
+        doNothing().when(context).setRecordContext(recordContext);
+
+        final KTableValueGetter<String, String> getter = transformValues.view().get();
+        getter.init(context);
+
+        final ValueTimestampHeaders<String> result = getter.get("Key");
+
+        assertThat(result.value(), is("Key->null!"));
+        assertThat(result.headers(), is(contextHeaders));
     }
 
     @Test
@@ -257,9 +281,8 @@ public class KTableTransformValuesTest {
         final KTableTransformValues<String, String, String> transformValues =
             new KTableTransformValues<>(parent, new ExclamationValueTransformerSupplier(), QUERYABLE_NAME);
 
-        expect(context.getStateStore(QUERYABLE_NAME)).andReturn(stateStore);
-        expect(stateStore.get("Key")).andReturn(ValueAndTimestamp.make("something", 0L));
-        replay(context, stateStore);
+        when(context.getStateStore(QUERYABLE_NAME)).thenReturn(stateStore);
+        when(stateStore.get("Key")).thenReturn(ValueTimestampHeaders.make("something", 0L, new RecordHeaders()));
 
         final KTableValueGetter<String, String> getter = transformValues.view().get();
         getter.init(context);
@@ -274,9 +297,8 @@ public class KTableTransformValuesTest {
         final KTableTransformValues<String, String, String> transformValues =
             new KTableTransformValues<>(parent, new ExclamationValueTransformerSupplier(), null);
 
-        expect(parent.valueGetterSupplier()).andReturn(parentGetterSupplier);
-        expect(parentGetterSupplier.storeNames()).andReturn(new String[]{"store1", "store2"});
-        replay(parent, parentGetterSupplier);
+        when(parent.valueGetterSupplier()).thenReturn(parentGetterSupplier);
+        when(parentGetterSupplier.storeNames()).thenReturn(new String[]{"store1", "store2"});
 
         final String[] storeNames = transformValues.view().storeNames();
 
@@ -298,15 +320,11 @@ public class KTableTransformValuesTest {
         final KTableTransformValues<String, String, String> transformValues =
             new KTableTransformValues<>(parent, mockSupplier, null);
 
-        expect(mockSupplier.get()).andReturn(transformer);
-        transformer.close();
-        expectLastCall();
-        replay(mockSupplier, transformer);
+        when(mockSupplier.get()).thenReturn(transformer);
+        doNothing().when(transformer).close();
 
         final Processor<String, Change<String>, String, Change<String>> processor = transformValues.get();
         processor.close();
-
-        verify(transformer);
     }
 
     @Test
@@ -314,19 +332,14 @@ public class KTableTransformValuesTest {
         final KTableTransformValues<String, String, String> transformValues =
             new KTableTransformValues<>(parent, mockSupplier, null);
 
-        expect(mockSupplier.get()).andReturn(transformer);
-        expect(parentGetterSupplier.get()).andReturn(parentGetter);
-        expect(parent.valueGetterSupplier()).andReturn(parentGetterSupplier);
+        when(mockSupplier.get()).thenReturn(transformer);
+        when(parentGetterSupplier.get()).thenReturn(parentGetter);
+        when(parent.valueGetterSupplier()).thenReturn(parentGetterSupplier);
 
-        transformer.close();
-        expectLastCall();
-
-        replay(mockSupplier, transformer, parent, parentGetterSupplier);
+        doNothing().when(transformer).close();
 
         final KTableValueGetter<String, String> getter = transformValues.view().get();
         getter.close();
-
-        verify(transformer);
     }
 
     @Test
@@ -334,23 +347,18 @@ public class KTableTransformValuesTest {
         final KTableTransformValues<String, String, String> transformValues =
             new KTableTransformValues<>(parent, mockSupplier, null);
 
-        expect(parent.valueGetterSupplier()).andReturn(parentGetterSupplier);
-        expect(mockSupplier.get()).andReturn(transformer);
-        expect(parentGetterSupplier.get()).andReturn(parentGetter);
-
-        parentGetter.close();
-        expectLastCall();
-
-        replay(mockSupplier, parent, parentGetterSupplier, parentGetter);
+        when(parent.valueGetterSupplier()).thenReturn(parentGetterSupplier);
+        when(mockSupplier.get()).thenReturn(transformer);
+        when(parentGetterSupplier.get()).thenReturn(parentGetter);
+        doNothing().when(parentGetter).close();
 
         final KTableValueGetter<String, String> getter = transformValues.view().get();
         getter.close();
-
-        verify(parentGetter);
     }
 
-    @Test
-    public void shouldTransformValuesWithKey() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldTransformValuesWithKey(final boolean withHeaders) {
         builder
             .addStateStore(storeBuilder(STORE_NAME))
             .addStateStore(storeBuilder(OTHER_STORE_NAME))
@@ -361,7 +369,7 @@ public class KTableTransformValuesTest {
             .toStream()
             .process(capture);
 
-        driver = new TopologyTestDriver(builder.build(), props());
+        driver = new TopologyTestDriver(builder.build(), props(withHeaders));
         final TestInputTopic<String, String> inputTopic =
                 driver.createInputTopic(INPUT_TOPIC, new StringSerializer(), new StringSerializer());
 
@@ -374,11 +382,12 @@ public class KTableTransformValuesTest {
                 new KeyValueTimestamp<>("B", "B->b!", 10),
                 new KeyValueTimestamp<>("D", "D->null!", 15)
         ));
-        assertNull("Store should not be materialized", driver.getKeyValueStore(QUERYABLE_NAME));
+        assertNull(driver.getKeyValueStore(QUERYABLE_NAME), "Store should not be materialized");
     }
 
-    @Test
-    public void shouldTransformValuesWithKeyAndMaterialize() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldTransformValuesWithKeyAndMaterialize(final boolean withHeaders) {
         builder
             .addStateStore(storeBuilder(STORE_NAME))
             .table(INPUT_TOPIC, CONSUMED)
@@ -391,7 +400,7 @@ public class KTableTransformValuesTest {
             .toStream()
             .process(capture);
 
-        driver = new TopologyTestDriver(builder.build(), props());
+        driver = new TopologyTestDriver(builder.build(), props(withHeaders));
         final TestInputTopic<String, String> inputTopic =
                 driver.createInputTopic(INPUT_TOPIC, new StringSerializer(), new StringSerializer());
         inputTopic.pipeInput("A", "a", 5L);
@@ -416,8 +425,9 @@ public class KTableTransformValuesTest {
         }
     }
 
-    @Test
-    public void shouldCalculateCorrectOldValuesIfMaterializedEvenIfStateful() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldCalculateCorrectOldValuesIfMaterializedEvenIfStateful(final boolean withHeaders) {
         builder
             .table(INPUT_TOPIC, CONSUMED)
             .transformValues(
@@ -431,7 +441,7 @@ public class KTableTransformValuesTest {
             .toStream()
             .process(capture);
 
-        driver = new TopologyTestDriver(builder.build(), props());
+        driver = new TopologyTestDriver(builder.build(), props(withHeaders));
         final TestInputTopic<String, String> inputTopic =
                 driver.createInputTopic(INPUT_TOPIC, new StringSerializer(), new StringSerializer());
 
@@ -439,18 +449,19 @@ public class KTableTransformValuesTest {
         inputTopic.pipeInput("A", "ignored1", 15L);
         inputTopic.pipeInput("A", "ignored2", 10L);
 
-        assertThat(output(), hasItems(new KeyValueTimestamp<>("A", "1", 5),
-                new KeyValueTimestamp<>("A", "0", 15),
+        assertThat(output(), equalTo(Arrays.asList(new KeyValueTimestamp<>("A", "1", 5),
                 new KeyValueTimestamp<>("A", "2", 15),
-                new KeyValueTimestamp<>("A", "0", 15),
-                new KeyValueTimestamp<>("A", "3", 15)));
+                new KeyValueTimestamp<>("A", "3", 15))));
 
         final KeyValueStore<String, Integer> keyValueStore = driver.getKeyValueStore(QUERYABLE_NAME);
         assertThat(keyValueStore.get("A"), is(3));
+        assertThat(driver.getAllStateStores().keySet(),
+            equalTo(Set.of(QUERYABLE_NAME, "KTABLE-AGGREGATE-STATE-STORE-0000000005")));
     }
 
-    @Test
-    public void shouldCalculateCorrectOldValuesIfNotStatefulEvenIfNotMaterialized() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldCalculateCorrectOldValuesIfNotStatefulEvenIfNotMaterialized(final boolean withHeaders) {
         builder
             .table(INPUT_TOPIC, CONSUMED)
             .transformValues(new StatelessTransformerSupplier())
@@ -460,7 +471,7 @@ public class KTableTransformValuesTest {
             .toStream()
             .process(capture);
 
-        driver = new TopologyTestDriver(builder.build(), props());
+        driver = new TopologyTestDriver(builder.build(), props(withHeaders));
         final TestInputTopic<String, String> inputTopic =
                 driver.createInputTopic(INPUT_TOPIC, new StringSerializer(), new StringSerializer());
 
@@ -468,11 +479,40 @@ public class KTableTransformValuesTest {
         inputTopic.pipeInput("A", "aa", 15L);
         inputTopic.pipeInput("A", "aaa", 10);
 
-        assertThat(output(), hasItems(new KeyValueTimestamp<>("A", "1", 5),
-                 new KeyValueTimestamp<>("A", "0", 15),
-                 new KeyValueTimestamp<>("A", "2", 15),
-                 new KeyValueTimestamp<>("A", "0", 15),
-                 new KeyValueTimestamp<>("A", "3", 15)));
+        assertThat(output(), equalTo(Arrays.asList(new KeyValueTimestamp<>("A", "1", 5),
+                new KeyValueTimestamp<>("A", "2", 15),
+                new KeyValueTimestamp<>("A", "3", 15))));
+        assertThat(driver.getAllStateStores().keySet(),
+            equalTo(Set.of("inputTopic-STATE-STORE-0000000000", "KTABLE-AGGREGATE-STATE-STORE-0000000005")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldCalculateCorrectOldValuesIfNotStatefulEvenNotMaterializedNoQueryableName(final boolean withHeaders) {
+        builder
+            .table(INPUT_TOPIC, CONSUMED)
+            .transformValues(new StatelessTransformerSupplier(),
+                Materialized.with(Serdes.String(), Serdes.Integer())
+            )
+            .groupBy(toForceSendingOfOldValues(), Grouped.with(Serdes.String(), Serdes.Integer()))
+            .reduce(MockReducer.INTEGER_ADDER, MockReducer.INTEGER_SUBTRACTOR)
+            .mapValues(mapBackToStrings())
+            .toStream()
+            .process(capture);
+
+        driver = new TopologyTestDriver(builder.build(), props(withHeaders));
+        final TestInputTopic<String, String> inputTopic =
+            driver.createInputTopic(INPUT_TOPIC, new StringSerializer(), new StringSerializer());
+
+        inputTopic.pipeInput("A", "a", 5L);
+        inputTopic.pipeInput("A", "aa", 15L);
+        inputTopic.pipeInput("A", "aaa", 10);
+
+        assertThat(output(), equalTo(Arrays.asList(new KeyValueTimestamp<>("A", "1", 5),
+            new KeyValueTimestamp<>("A", "2", 15),
+            new KeyValueTimestamp<>("A", "3", 15))));
+        assertThat(driver.getAllStateStores().keySet(),
+            equalTo(Set.of("inputTopic-STATE-STORE-0000000000", "KTABLE-AGGREGATE-STATE-STORE-0000000005")));
     }
 
     private ArrayList<KeyValueTimestamp<String, String>> output() {
@@ -491,11 +531,12 @@ public class KTableTransformValuesTest {
         return Stores.keyValueStoreBuilder(Stores.persistentKeyValueStore(storeName), Serdes.Long(), Serdes.Long());
     }
 
-    public static Properties props() {
+    public static Properties props(final boolean withHeaders) {
         final Properties props = new Properties();
         props.setProperty(StreamsConfig.STATE_DIR_CONFIG, TestUtils.tempDirectory().getAbsolutePath());
         props.setProperty(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.Integer().getClass().getName());
         props.setProperty(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.Integer().getClass().getName());
+        StreamsTestUtils.maybeSetDslStoreFormatHeaders(props, withHeaders);
         return props;
     }
 
