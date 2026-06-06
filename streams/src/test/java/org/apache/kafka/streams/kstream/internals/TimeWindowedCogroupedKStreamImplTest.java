@@ -17,17 +17,12 @@
 
 package org.apache.kafka.streams.kstream.internals;
 
-import static java.time.Duration.ofMillis;
-import static org.hamcrest.CoreMatchers.equalTo;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.Assert.assertThrows;
-
-import java.util.Properties;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.streams.StreamsBuilder;
+import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.TestInputTopic;
 import org.apache.kafka.streams.TestOutputTopic;
 import org.apache.kafka.streams.TopologyTestDriver;
@@ -48,10 +43,17 @@ import org.apache.kafka.streams.test.TestRecord;
 import org.apache.kafka.test.MockAggregator;
 import org.apache.kafka.test.MockInitializer;
 import org.apache.kafka.test.StreamsTestUtils;
-import org.junit.Before;
-import org.junit.Test;
 
-@SuppressWarnings("deprecation")
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+
+import java.util.Properties;
+
+import static java.time.Duration.ofMillis;
+import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
 public class TimeWindowedCogroupedKStreamImplTest {
 
     private static final Long WINDOW_SIZE = 500L;
@@ -68,8 +70,12 @@ public class TimeWindowedCogroupedKStreamImplTest {
 
     private final Properties props = StreamsTestUtils.getStreamsConfig(Serdes.String(), Serdes.String());
 
-    @Before
-    public void setup() {
+    public void setup(final boolean withHeaders) {
+        if (withHeaders) {
+            props.put(StreamsConfig.DSL_STORE_FORMAT_CONFIG, StreamsConfig.DSL_STORE_FORMAT_HEADERS);
+        } else {
+            props.put(StreamsConfig.DSL_STORE_FORMAT_CONFIG, StreamsConfig.DSL_STORE_FORMAT_DEFAULT);
+        }
         final KStream<String, String> stream = builder.stream(TOPIC, Consumed
             .with(Serdes.String(), Serdes.String()));
         final KStream<String, String> stream2 = builder.stream(TOPIC2, Consumed
@@ -79,58 +85,76 @@ public class TimeWindowedCogroupedKStreamImplTest {
         groupedStream2 = stream2.groupByKey(Grouped.with(Serdes.String(), Serdes.String()));
         cogroupedStream = groupedStream.cogroup(MockAggregator.TOSTRING_ADDER)
                 .cogroup(groupedStream2, MockAggregator.TOSTRING_REMOVER);
-        windowedCogroupedStream = cogroupedStream.windowedBy(TimeWindows.of(ofMillis(WINDOW_SIZE)));
+        windowedCogroupedStream = cogroupedStream.windowedBy(TimeWindows.ofSizeWithNoGrace(ofMillis(WINDOW_SIZE)));
     }
 
-    @Test
-    public void shouldNotHaveNullInitializerOnAggregate() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldNotHaveNullInitializerOnAggregate(final boolean withHeaders) {
+        setup(withHeaders);
         assertThrows(NullPointerException.class, () -> windowedCogroupedStream.aggregate(null));
     }
 
-    @Test
-    public void shouldNotHaveNullMaterializedOnTwoOptionAggregate() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldNotHaveNullMaterializedOnTwoOptionAggregate(final boolean withHeaders) {
+        setup(withHeaders);
         assertThrows(NullPointerException.class, () -> windowedCogroupedStream.aggregate(MockInitializer.STRING_INIT,
             (Materialized<String, String, WindowStore<Bytes, byte[]>>) null));
     }
 
-    @Test
-    public void shouldNotHaveNullNamedTwoOptionOnAggregate() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldNotHaveNullNamedTwoOptionOnAggregate(final boolean withHeaders) {
+        setup(withHeaders);
         assertThrows(NullPointerException.class, () -> windowedCogroupedStream.aggregate(MockInitializer.STRING_INIT, (Named) null));
     }
 
-    @Test
-    public void shouldNotHaveNullInitializerTwoOptionNamedOnAggregate() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldNotHaveNullInitializerTwoOptionNamedOnAggregate(final boolean withHeaders) {
+        setup(withHeaders);
         assertThrows(NullPointerException.class, () -> windowedCogroupedStream.aggregate(null, Named.as("test")));
     }
 
-    @Test
-    public void shouldNotHaveNullInitializerTwoOptionMaterializedOnAggregate() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldNotHaveNullInitializerTwoOptionMaterializedOnAggregate(final boolean withHeaders) {
+        setup(withHeaders);
         assertThrows(NullPointerException.class, () -> windowedCogroupedStream.aggregate(null, Materialized.as("test")));
     }
 
-    @Test
-    public void shouldNotHaveNullInitializerThreeOptionOnAggregate() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldNotHaveNullInitializerThreeOptionOnAggregate(final boolean withHeaders) {
+        setup(withHeaders);
         assertThrows(NullPointerException.class, () -> windowedCogroupedStream.aggregate(null, Named.as("test"), Materialized.as("test")));
     }
 
-    @Test
-    public void shouldNotHaveNullMaterializedOnAggregate() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldNotHaveNullMaterializedOnAggregate(final boolean withHeaders) {
+        setup(withHeaders);
         assertThrows(NullPointerException.class, () -> windowedCogroupedStream.aggregate(MockInitializer.STRING_INIT, Named.as("Test"), null));
     }
 
-    @Test
-    public void shouldNotHaveNullNamedOnAggregate() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldNotHaveNullNamedOnAggregate(final boolean withHeaders) {
+        setup(withHeaders);
         assertThrows(NullPointerException.class, () -> windowedCogroupedStream.aggregate(MockInitializer.STRING_INIT, null, Materialized.as("test")));
     }
 
-    @Test
-    public void namedParamShouldSetName() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void namedParamShouldSetName(final boolean withHeaders) {
+        setup(withHeaders);
         final StreamsBuilder builder = new StreamsBuilder();
         final KStream<String, String> stream = builder.stream(TOPIC, Consumed
                 .with(Serdes.String(), Serdes.String()));
         groupedStream = stream.groupByKey(Grouped.with(Serdes.String(), Serdes.String()));
         groupedStream.cogroup(MockAggregator.TOSTRING_ADDER)
-                .windowedBy(TimeWindows.of(ofMillis(WINDOW_SIZE)))
+                .windowedBy(TimeWindows.ofSizeWithNoGrace(ofMillis(WINDOW_SIZE)))
                 .aggregate(MockInitializer.STRING_INIT, Named.as("foo"));
 
         assertThat(builder.build().describe().toString(), equalTo(
@@ -146,8 +170,10 @@ public class TimeWindowedCogroupedKStreamImplTest {
                 "      <-- foo-cogroup-agg-0\n\n"));
     }
 
-    @Test
-    public void timeWindowAggregateTestStreamsTest() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void timeWindowAggregateTestStreamsTest(final boolean withHeaders) {
+        setup(withHeaders);
 
         final KTable<Windowed<String>, String> customers = windowedCogroupedStream.aggregate(
                 MockInitializer.STRING_INIT, Materialized.with(Serdes.String(), Serdes.String()));
@@ -180,8 +206,10 @@ public class TimeWindowedCogroupedKStreamImplTest {
 
     }
 
-    @Test
-    public void timeWindowMixAggregatorsTest() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void timeWindowMixAggregatorsTest(final boolean withHeaders) {
+        setup(withHeaders);
 
         final KTable<Windowed<String>, String> customers = windowedCogroupedStream.aggregate(
                 MockInitializer.STRING_INIT, Materialized.with(Serdes.String(), Serdes.String()));
@@ -216,11 +244,13 @@ public class TimeWindowedCogroupedKStreamImplTest {
 
     }
 
-    @Test
-    public void timeWindowAggregateManyWindowsTest() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void timeWindowAggregateManyWindowsTest(final boolean withHeaders) {
+        setup(withHeaders);
 
         final KTable<Windowed<String>, String> customers = groupedStream.cogroup(MockAggregator.TOSTRING_ADDER)
-                .windowedBy(TimeWindows.of(ofMillis(500L))).aggregate(
+                .windowedBy(TimeWindows.ofSizeWithNoGrace(ofMillis(500L))).aggregate(
                         MockInitializer.STRING_INIT, Materialized.with(Serdes.String(), Serdes.String()));
         customers.toStream().to(OUTPUT);
 
@@ -242,11 +272,13 @@ public class TimeWindowedCogroupedKStreamImplTest {
         }
     }
 
-    @Test
-    public void timeWindowAggregateOverlappingWindowsTest() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void timeWindowAggregateOverlappingWindowsTest(final boolean withHeaders) {
+        setup(withHeaders);
 
         final KTable<Windowed<String>, String> customers = groupedStream.cogroup(MockAggregator.TOSTRING_ADDER)
-                .windowedBy(TimeWindows.of(ofMillis(500L)).advanceBy(ofMillis(200L))).aggregate(
+                .windowedBy(TimeWindows.ofSizeWithNoGrace(ofMillis(500L)).advanceBy(ofMillis(200L))).aggregate(
                         MockInitializer.STRING_INIT, Materialized.with(Serdes.String(), Serdes.String()));
         customers.toStream().to(OUTPUT);
 
@@ -276,8 +308,10 @@ public class TimeWindowedCogroupedKStreamImplTest {
         }
     }
 
-    @Test
-    public void timeWindowMixAggregatorsManyWindowsTest() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void timeWindowMixAggregatorsManyWindowsTest(final boolean withHeaders) {
+        setup(withHeaders);
 
         final KTable<Windowed<String>, String> customers = windowedCogroupedStream.aggregate(
                 MockInitializer.STRING_INIT, Materialized.with(Serdes.String(), Serdes.String()));
