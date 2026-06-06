@@ -17,7 +17,7 @@
 package org.apache.kafka.clients.producer;
 
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.record.internal.RecordBatch;
 import org.apache.kafka.common.requests.ProduceResponse;
 
 /**
@@ -52,24 +52,6 @@ public final class RecordMetadata {
         this.serializedKeySize = serializedKeySize;
         this.serializedValueSize = serializedValueSize;
         this.topicPartition = topicPartition;
-    }
-
-    /**
-     * Creates a new instance with the provided parameters.
-     *
-     * @deprecated use constructor without `checksum` parameter. This constructor will be removed in
-     *             Apache Kafka 4.0 (deprecated since 3.0).
-     */
-    @Deprecated
-    public RecordMetadata(TopicPartition topicPartition, long baseOffset, long batchIndex, long timestamp,
-                          Long checksum, int serializedKeySize, int serializedValueSize) {
-        this(topicPartition, baseOffset, batchIndexToInt(batchIndex), timestamp, serializedKeySize, serializedValueSize);
-    }
-
-    private static int batchIndexToInt(long batchIndex) {
-        if (batchIndex > Integer.MAX_VALUE)
-            throw new IllegalArgumentException("batchIndex is larger than Integer.MAX_VALUE: " + batchIndex);
-        return (int) batchIndex;
     }
 
     /**
