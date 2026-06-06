@@ -17,7 +17,7 @@
 package org.apache.kafka.clients.consumer;
 
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.utils.AbstractIterator;
+import org.apache.kafka.common.utils.internals.AbstractIterator;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -32,12 +32,30 @@ import java.util.Set;
  * partition returned by a {@link Consumer#poll(java.time.Duration)} operation.
  */
 public class ConsumerRecords<K, V> implements Iterable<ConsumerRecord<K, V>> {
-    public static final ConsumerRecords<Object, Object> EMPTY = new ConsumerRecords<>(Collections.emptyMap());
+    public static final ConsumerRecords<Object, Object> EMPTY = new ConsumerRecords<>(Map.of(), Map.of());
 
     private final Map<TopicPartition, List<ConsumerRecord<K, V>>> records;
+    private final Map<TopicPartition, OffsetAndMetadata> nextOffsets;
 
+    /**
+     * @deprecated Since 4.0. Use {@link #ConsumerRecords(Map, Map)} instead.
+     */
+    @Deprecated
     public ConsumerRecords(Map<TopicPartition, List<ConsumerRecord<K, V>>> records) {
+        this(records, Map.of());
+    }
+
+    /**
+     * Constructs a new ConsumerRecords with the given records and next offsets.
+     *
+     * @param records The records for each partition
+     * @param nextOffsets The next offset and metadata for each partition whose position was advanced
+     *                    during the poll call. These represent the offsets that the consumer will
+     *                    start reading from on the next poll.
+     */
+    public ConsumerRecords(Map<TopicPartition, List<ConsumerRecord<K, V>>> records, final Map<TopicPartition, OffsetAndMetadata> nextOffsets) {
         this.records = records;
+        this.nextOffsets = Map.copyOf(nextOffsets);
     }
 
     /**
@@ -51,6 +69,14 @@ public class ConsumerRecords<K, V> implements Iterable<ConsumerRecord<K, V>> {
             return Collections.emptyList();
         else
             return Collections.unmodifiableList(recs);
+    }
+
+    /**
+     * Get the next offsets and metadata corresponding to all topic partitions for which the position have been advanced in this poll call
+     * @return The next offsets that the consumer will consume
+     */
+    public Map<TopicPartition, OffsetAndMetadata> nextOffsets() {
+        return nextOffsets;
     }
 
     /**
@@ -69,7 +95,7 @@ public class ConsumerRecords<K, V> implements Iterable<ConsumerRecord<K, V>> {
 
     /**
      * Get the partitions which have records contained in this record set.
-     * @return the set of partitions with data in this record set (may be empty if no data was returned)
+     * @return The set of partitions with data in this record set (may be empty if no data was returned)
      */
     public Set<TopicPartition> partitions() {
         return Collections.unmodifiableSet(records.keySet());
@@ -100,11 +126,11 @@ public class ConsumerRecords<K, V> implements Iterable<ConsumerRecord<K, V>> {
 
         @Override
         public Iterator<ConsumerRecord<K, V>> iterator() {
-            return new AbstractIterator<ConsumerRecord<K, V>>() {
-                Iterator<? extends Iterable<ConsumerRecord<K, V>>> iters = iterables.iterator();
+            return new AbstractIterator<>() {
+                final Iterator<? extends Iterable<ConsumerRecord<K, V>>> iters = iterables.iterator();
                 Iterator<ConsumerRecord<K, V>> current;
 
-                public ConsumerRecord<K, V> makeNext() {
+                protected ConsumerRecord<K, V> makeNext() {
                     while (current == null || !current.hasNext()) {
                         if (iters.hasNext())
                             current = iters.next().iterator();
@@ -117,10 +143,22 @@ public class ConsumerRecords<K, V> implements Iterable<ConsumerRecord<K, V>> {
         }
     }
 
+    /**
+     * Returns whether this container has any records.
+     *
+     * @return True if there are no records, false otherwise
+     */
     public boolean isEmpty() {
         return records.isEmpty();
     }
 
+    /**
+     * Returns an empty ConsumerRecords instance.
+     *
+     * @param <K> The key type
+     * @param <V> The value type
+     * @return An empty ConsumerRecords
+     */
     @SuppressWarnings("unchecked")
     public static <K, V> ConsumerRecords<K, V> empty() {
         return (ConsumerRecords<K, V>) EMPTY;
