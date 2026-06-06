@@ -16,10 +16,9 @@
  */
 package org.apache.kafka.streams.query;
 
+import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.annotation.InterfaceStability.Evolving;
 
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 
@@ -39,6 +38,7 @@ public class StateQueryRequest<R> {
     private final Query<R> query;
     private final boolean executionInfoEnabled;
     private final boolean requireActive;
+    private final Optional<IsolationLevel> isolationLevel;
 
     private StateQueryRequest(
         final String storeName,
@@ -46,7 +46,8 @@ public class StateQueryRequest<R> {
         final Optional<Set<Integer>> partitions,
         final Query<R> query,
         final boolean executionInfoEnabled,
-        final boolean requireActive) {
+        final boolean requireActive,
+        final Optional<IsolationLevel> isolationLevel) {
 
         this.storeName = storeName;
         this.position = position;
@@ -54,6 +55,7 @@ public class StateQueryRequest<R> {
         this.query = query;
         this.executionInfoEnabled = executionInfoEnabled;
         this.requireActive = requireActive;
+        this.isolationLevel = isolationLevel;
     }
 
     /**
@@ -73,7 +75,8 @@ public class StateQueryRequest<R> {
             partitions,
             query,
             executionInfoEnabled,
-            requireActive
+            requireActive,
+            isolationLevel
         );
     }
 
@@ -88,7 +91,8 @@ public class StateQueryRequest<R> {
             Optional.empty(),
             query,
             executionInfoEnabled,
-            requireActive
+            requireActive,
+            isolationLevel
         );
     }
 
@@ -102,10 +106,11 @@ public class StateQueryRequest<R> {
         return new StateQueryRequest<>(
             storeName,
             position,
-            Optional.of(Collections.unmodifiableSet(new HashSet<>(partitions))),
+            Optional.of(Set.copyOf(partitions)),
             query,
             executionInfoEnabled,
-            requireActive
+            requireActive,
+            isolationLevel
         );
     }
 
@@ -120,7 +125,8 @@ public class StateQueryRequest<R> {
             partitions,
             query,
             true,
-            requireActive
+            requireActive,
+            isolationLevel
         );
     }
 
@@ -136,7 +142,24 @@ public class StateQueryRequest<R> {
             partitions,
             query,
             executionInfoEnabled,
-            true
+            true,
+            isolationLevel
+        );
+    }
+
+    /**
+     * Overrides the {@link IsolationLevel} for this query. When absent, the effective isolation
+     * level falls back to {@link org.apache.kafka.streams.StreamsConfig#DEFAULT_INTERACTIVE_QUERY_ISOLATION_LEVEL_CONFIG}.
+     */
+    public StateQueryRequest<R> withIsolationLevel(final IsolationLevel isolationLevel) {
+        return new StateQueryRequest<>(
+            storeName,
+            position,
+            partitions,
+            query,
+            executionInfoEnabled,
+            requireActive,
+            Optional.of(isolationLevel)
         );
     }
 
@@ -166,7 +189,7 @@ public class StateQueryRequest<R> {
      * Whether this request should fetch from all locally available partitions.
      */
     public boolean isAllPartitions() {
-        return !partitions.isPresent();
+        return partitions.isEmpty();
     }
 
     /**
@@ -175,7 +198,7 @@ public class StateQueryRequest<R> {
      * @throws IllegalStateException if this is a request for all partitions
      */
     public Set<Integer> getPartitions() {
-        if (!partitions.isPresent()) {
+        if (partitions.isEmpty()) {
             throw new IllegalStateException(
                 "Cannot list partitions of an 'all partitions' request");
         } else {
@@ -195,6 +218,14 @@ public class StateQueryRequest<R> {
      */
     public boolean isRequireActive() {
         return requireActive;
+    }
+
+    /**
+     * The isolation level override for this query, if any. If empty, the effective isolation level
+     * comes from {@link org.apache.kafka.streams.StreamsConfig#DEFAULT_INTERACTIVE_QUERY_ISOLATION_LEVEL_CONFIG}.
+     */
+    public Optional<IsolationLevel> isolationLevel() {
+        return isolationLevel;
     }
 
     /**
@@ -218,7 +249,8 @@ public class StateQueryRequest<R> {
                 Optional.empty(), // default: all partitions
                 query, // the query is specified
                 false, // default: no execution info
-                false // default: don't require active
+                false, // default: don't require active
+                Optional.empty() // default: no isolation-level override
             );
         }
     }
