@@ -18,28 +18,23 @@
 package org.apache.kafka.image;
 
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.image.node.AclsImageNode;
+import org.apache.kafka.image.writer.ImageWriter;
 import org.apache.kafka.metadata.authorizer.StandardAcl;
 import org.apache.kafka.metadata.authorizer.StandardAclWithId;
-import org.apache.kafka.server.common.ApiMessageAndVersion;
 
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 
 /**
  * Represents the ACLs in the metadata image.
- *
+ * <p>
  * This class is thread-safe.
  */
-public final class AclsImage {
-    public static final AclsImage EMPTY = new AclsImage(Collections.emptyMap());
-
-    private final Map<Uuid, StandardAcl> acls;
+public record AclsImage(Map<Uuid, StandardAcl> acls) {
+    public static final AclsImage EMPTY = new AclsImage(Map.of());
 
     public AclsImage(Map<Uuid, StandardAcl> acls) {
         this.acls = Collections.unmodifiableMap(acls);
@@ -49,35 +44,15 @@ public final class AclsImage {
         return acls.isEmpty();
     }
 
-    public Map<Uuid, StandardAcl> acls() {
-        return acls;
-    }
-
-    public void write(Consumer<List<ApiMessageAndVersion>> out) {
-        List<ApiMessageAndVersion> batch = new ArrayList<>();
+    public void write(ImageWriter writer) {
         for (Entry<Uuid, StandardAcl> entry : acls.entrySet()) {
             StandardAclWithId aclWithId = new StandardAclWithId(entry.getKey(), entry.getValue());
-            batch.add(new ApiMessageAndVersion(aclWithId.toRecord(), (short) 0));
+            writer.write(0, aclWithId.toRecord());
         }
-        out.accept(batch);
-    }
-
-    @Override
-    public int hashCode() {
-        return acls.hashCode();
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (!(o instanceof AclsImage)) return false;
-        AclsImage other = (AclsImage) o;
-        return acls.equals(other.acls);
     }
 
     @Override
     public String toString() {
-        return "AclsImage(" + acls.values().stream().
-            map(a -> a.toString()).
-            collect(Collectors.joining(", ")) + ")";
+        return new AclsImageNode(this).stringify();
     }
 }
