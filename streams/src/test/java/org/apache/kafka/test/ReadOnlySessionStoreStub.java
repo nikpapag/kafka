@@ -16,11 +16,13 @@
  */
 package org.apache.kafka.test;
 
+import org.apache.kafka.common.IsolationLevel;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.errors.InvalidStateStoreException;
 import org.apache.kafka.streams.kstream.Windowed;
-import org.apache.kafka.streams.processor.ProcessorContext;
 import org.apache.kafka.streams.processor.StateStore;
+import org.apache.kafka.streams.processor.StateStoreContext;
 import org.apache.kafka.streams.query.Position;
 import org.apache.kafka.streams.state.KeyValueIterator;
 import org.apache.kafka.streams.state.ReadOnlySessionStore;
@@ -29,12 +31,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 
 public class ReadOnlySessionStoreStub<K, V> implements ReadOnlySessionStore<K, V>, StateStore {
     private final NavigableMap<K, List<KeyValue<Windowed<K>, V>>> sessions = new TreeMap<>();
     private boolean open = true;
+    public IsolationLevel isolationLevel;
 
     public void put(final Windowed<K> sessionKey, final V value) {
         if (!sessions.containsKey(sessionKey.key())) {
@@ -74,7 +78,7 @@ public class ReadOnlySessionStoreStub<K, V> implements ReadOnlySessionStore<K, V
             throw new InvalidStateStoreException("not open");
         }
         if (!sessions.containsKey(key)) {
-            return new KeyValueIteratorStub<>(Collections.<KeyValue<Windowed<K>, V>>emptyIterator());
+            return new KeyValueIteratorStub<>(Collections.emptyIterator());
         }
         return new KeyValueIteratorStub<>(sessions.get(key).iterator());
     }
@@ -99,11 +103,11 @@ public class ReadOnlySessionStoreStub<K, V> implements ReadOnlySessionStore<K, V
         NavigableMap<K, List<KeyValue<Windowed<K>, V>>> subSessionsMap = getSubSessionsMap(keyFrom, keyTo);
 
         if (subSessionsMap.isEmpty()) {
-            return new KeyValueIteratorStub<>(Collections.<KeyValue<Windowed<K>, V>>emptyIterator());
+            return new KeyValueIteratorStub<>(Collections.emptyIterator());
         }
         final Iterator<List<KeyValue<Windowed<K>, V>>> keysIterator = subSessionsMap.values().iterator();
         return new KeyValueIteratorStub<>(
-            new Iterator<KeyValue<Windowed<K>, V>>() {
+            new Iterator<>() {
 
                 Iterator<KeyValue<Windowed<K>, V>> it;
 
@@ -155,7 +159,7 @@ public class ReadOnlySessionStoreStub<K, V> implements ReadOnlySessionStore<K, V
 
         final Iterator<List<KeyValue<Windowed<K>, V>>> keysIterator = subSessionsMap.descendingMap().values().iterator();
         return new KeyValueIteratorStub<>(
-            new Iterator<KeyValue<Windowed<K>, V>>() {
+            new Iterator<>() {
 
                 Iterator<KeyValue<Windowed<K>, V>> it;
 
@@ -183,14 +187,11 @@ public class ReadOnlySessionStoreStub<K, V> implements ReadOnlySessionStore<K, V
         return "";
     }
 
-    @Deprecated
     @Override
-    public void init(final ProcessorContext context, final StateStore root) {
-
-    }
+    public void init(StateStoreContext stateStoreContext, StateStore root) {}
 
     @Override
-    public void flush() {
+    public void commit(final Map<TopicPartition, Long> changelogOffsets) {
 
     }
 
@@ -217,5 +218,11 @@ public class ReadOnlySessionStoreStub<K, V> implements ReadOnlySessionStore<K, V
 
     public void setOpen(final boolean open) {
         this.open = open;
+    }
+
+    @Override
+    public ReadOnlySessionStore<K, V> readOnly(final IsolationLevel level) {
+        this.isolationLevel = level;
+        return this;
     }
 }

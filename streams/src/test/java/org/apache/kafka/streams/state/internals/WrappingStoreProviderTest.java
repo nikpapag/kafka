@@ -17,6 +17,7 @@
 package org.apache.kafka.streams.state.internals;
 
 
+import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.StoreQueryParameters;
 import org.apache.kafka.streams.errors.InvalidStateStoreException;
@@ -24,18 +25,19 @@ import org.apache.kafka.streams.errors.InvalidStateStorePartitionException;
 import org.apache.kafka.streams.state.NoOpWindowStore;
 import org.apache.kafka.streams.state.QueryableStoreTypes;
 import org.apache.kafka.streams.state.ReadOnlyKeyValueStore;
-import org.apache.kafka.streams.state.Stores;
 import org.apache.kafka.streams.state.ReadOnlyWindowStore;
+import org.apache.kafka.streams.state.Stores;
 import org.apache.kafka.test.StateStoreProviderStub;
-import org.junit.Before;
-import org.junit.Test;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.List;
 
 import static org.apache.kafka.streams.state.QueryableStoreTypes.windowStore;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class WrappingStoreProviderTest {
 
@@ -43,7 +45,7 @@ public class WrappingStoreProviderTest {
 
     private final int numStateStorePartitions = 2;
 
-    @Before
+    @BeforeEach
     public void before() {
         final StateStoreProviderStub stubProviderOne = new StateStoreProviderStub(false);
         final StateStoreProviderStub stubProviderTwo = new StateStoreProviderStub(false);
@@ -64,7 +66,7 @@ public class WrappingStoreProviderTest {
     @Test
     public void shouldFindKeyValueStores() {
         final List<ReadOnlyKeyValueStore<String, String>> results =
-                wrappingStoreProvider.stores("kv", QueryableStoreTypes.<String, String>keyValueStore());
+                wrappingStoreProvider.stores("kv", QueryableStoreTypes.keyValueStore());
         assertEquals(2, results.size());
     }
 
@@ -94,15 +96,31 @@ public class WrappingStoreProviderTest {
     public void shouldReturnAllStoreWhenQueryWithoutPartition() {
         wrappingStoreProvider.setStoreQueryParameters(StoreQueryParameters.fromNameAndType("kv", QueryableStoreTypes.<String, String>keyValueStore()));
         final List<ReadOnlyKeyValueStore<String, String>> results =
-                wrappingStoreProvider.stores("kv", QueryableStoreTypes.<String, String>keyValueStore());
+                wrappingStoreProvider.stores("kv", QueryableStoreTypes.keyValueStore());
         assertEquals(numStateStorePartitions, results.size());
+    }
+
+    @Test
+    public void shouldDefaultToReadUncommittedWhenIsolationLevelNotSpecified() {
+        assertEquals(IsolationLevel.READ_UNCOMMITTED, wrappingStoreProvider.defaultIsolationLevel());
+    }
+
+    @Test
+    public void shouldPropagateConfiguredDefaultIsolationLevel() {
+        final StateStoreProviderStub stub = new StateStoreProviderStub(false);
+        final WrappingStoreProvider provider = new WrappingStoreProvider(
+            Arrays.asList(stub),
+            StoreQueryParameters.fromNameAndType("kv", QueryableStoreTypes.keyValueStore()),
+            IsolationLevel.READ_COMMITTED
+        );
+        assertEquals(IsolationLevel.READ_COMMITTED, provider.defaultIsolationLevel());
     }
 
     @Test
     public void shouldReturnSingleStoreWhenQueryWithPartition() {
         wrappingStoreProvider.setStoreQueryParameters(StoreQueryParameters.fromNameAndType("kv", QueryableStoreTypes.<String, String>keyValueStore()).withPartition(numStateStorePartitions - 1));
         final List<ReadOnlyKeyValueStore<String, String>> results =
-                wrappingStoreProvider.stores("kv", QueryableStoreTypes.<String, String>keyValueStore());
+                wrappingStoreProvider.stores("kv", QueryableStoreTypes.keyValueStore());
         assertEquals(1, results.size());
     }
 }
