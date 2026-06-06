@@ -16,24 +16,40 @@
  */
 package org.apache.kafka.streams.test;
 
+import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.serialization.Serdes;
+import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.streams.StreamsConfig;
+import org.apache.kafka.streams.processor.Cancellable;
 import org.apache.kafka.streams.processor.PunctuationType;
 import org.apache.kafka.streams.processor.Punctuator;
+import org.apache.kafka.streams.processor.StateRestoreCallback;
+import org.apache.kafka.streams.processor.StateStore;
 import org.apache.kafka.streams.processor.TaskId;
+import org.apache.kafka.streams.processor.To;
+import org.apache.kafka.streams.processor.api.FixedKeyRecord;
 import org.apache.kafka.streams.processor.api.MockProcessorContext;
 import org.apache.kafka.streams.processor.api.MockProcessorContext.CapturedForward;
 import org.apache.kafka.streams.processor.api.Processor;
 import org.apache.kafka.streams.processor.api.ProcessorContext;
 import org.apache.kafka.streams.processor.api.Record;
 import org.apache.kafka.streams.processor.api.RecordMetadata;
+import org.apache.kafka.streams.processor.internals.AbstractProcessorContext;
+import org.apache.kafka.streams.processor.internals.RecordCollector;
+import org.apache.kafka.streams.processor.internals.StateManager;
+import org.apache.kafka.streams.processor.internals.StreamTask;
+import org.apache.kafka.streams.processor.internals.metrics.StreamsMetricsImpl;
+import org.apache.kafka.streams.query.Position;
 import org.apache.kafka.streams.state.KeyValueStore;
 import org.apache.kafka.streams.state.StoreBuilder;
 import org.apache.kafka.streams.state.Stores;
+import org.apache.kafka.streams.state.internals.ThreadCache;
+
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
@@ -50,7 +66,7 @@ import static org.hamcrest.Matchers.is;
 public class MockProcessorContextAPITest {
     @Test
     public void shouldCaptureOutputRecords() {
-        final Processor<String, Long, String, Long> processor = new Processor<String, Long, String, Long>() {
+        final Processor<String, Long, String, Long> processor = new Processor<>() {
             private ProcessorContext<String, Long> context;
 
             @Override
@@ -86,7 +102,7 @@ public class MockProcessorContextAPITest {
 
     @Test
     public void shouldCaptureRecordsOutputToChildByName() {
-        final Processor<String, Long, String, Long> processor = new Processor<String, Long, String, Long>() {
+        final Processor<String, Long, String, Long> processor = new Processor<>() {
             private ProcessorContext<String, Long> context;
 
             @Override
@@ -157,7 +173,7 @@ public class MockProcessorContextAPITest {
 
     @Test
     public void shouldCaptureCommitsAndAllowReset() {
-        final Processor<String, Long, Void, Void> processor = new Processor<String, Long, Void, Void>() {
+        final Processor<String, Long, Void, Void> processor = new Processor<>() {
             private ProcessorContext<Void, Void> context;
             private int count = 0;
 
@@ -192,9 +208,10 @@ public class MockProcessorContextAPITest {
         assertThat(context.committed(), is(false));
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     public void shouldStoreAndReturnStateStores() {
-        final Processor<String, Long, Void, Void> processor = new Processor<String, Long, Void, Void>() {
+        final Processor<String, Long, Void, Void> processor = new Processor<>() {
             private ProcessorContext<Void, Void> context;
 
             @Override
@@ -223,7 +240,66 @@ public class MockProcessorContextAPITest {
 
         final KeyValueStore<String, Long> store = storeBuilder.build();
 
-        store.init(context.getStateStoreContext(), store);
+        store.init(
+            new AbstractProcessorContext<>(new TaskId(0, 0), new StreamsConfig(context.appConfigs()), (StreamsMetricsImpl) context.metrics(), null) {
+                @SuppressWarnings("rawtypes")
+                @Override
+                public void forward(final Record record, final String childName) { }
+                @SuppressWarnings("rawtypes")
+                @Override
+                public void forward(final Record record) { }
+                @SuppressWarnings("rawtypes")
+                @Override
+                public void forward(final FixedKeyRecord record, final String childName) { }
+                @SuppressWarnings("rawtypes")
+                @Override
+                public void forward(final FixedKeyRecord record) { }
+                @Override
+                public Cancellable schedule(final Duration interval, final PunctuationType type, final Punctuator callback) {
+                    return null;
+                }
+                @Override
+                public Cancellable schedule(final Instant startTime, final Duration interval, final PunctuationType type, final Punctuator callback) {
+                    return null;
+                }
+                @Override
+                public void commit() { }
+                @Override
+                public long currentStreamTimeMs() {
+                    return 0;
+                }
+                @Override
+                public void forward(final Object key, final Object value, final To to) { }
+                @Override
+                public void forward(final Object key, final Object value) { }
+                @SuppressWarnings("unchecked")
+                @Override
+                public StateStore getStateStore(final String name) {
+                    return null;
+                }
+                @Override
+                public void transitionToActive(final StreamTask streamTask, final RecordCollector recordCollector, final ThreadCache newCache) { }
+                @Override
+                public void transitionToStandby(final ThreadCache newCache) { }
+                @Override
+                public void registerCacheFlushListener(final String namespace, final ThreadCache.DirtyEntryFlushListener listener) { }
+                @Override
+                public void logChange(final String storeName, final Bytes key, final byte[] value, final long timestamp, final Headers headers, final Position position) { }
+                @Override
+                protected StateManager stateManager() {
+                    return null;
+                }
+                @Override
+                public String changelogFor(final String storeName) {
+                    return "changelog";
+                }
+                @Override
+                public void register(final StateStore store, final StateRestoreCallback stateRestoreCallback) {
+                    context.getStateStoreContext().register(store, stateRestoreCallback);
+                }
+            },
+            store
+        );
 
         processor.init(context);
 
@@ -241,11 +317,11 @@ public class MockProcessorContextAPITest {
         final Properties config = mkProperties(
             mkMap(
                 mkEntry(StreamsConfig.APPLICATION_ID_CONFIG, "testMetadata"),
-                mkEntry(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "")
+                mkEntry(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "mock-localhost:9092")
             )
         );
 
-        final Processor<String, Object, String, Object> processor = new Processor<String, Object, String, Object>() {
+        final Processor<String, Object, String, Object> processor = new Processor<>() {
             private ProcessorContext<String, Object> context;
 
             @Override
@@ -301,7 +377,7 @@ public class MockProcessorContextAPITest {
 
     @Test
     public void shouldCapturePunctuator() {
-        final Processor<String, Long, Void, Void> processor = new Processor<String, Long, Void, Void>() {
+        final Processor<String, Long, Void, Void> processor = new Processor<>() {
             @Override
             public void init(final ProcessorContext<Void, Void> context) {
                 context.schedule(
@@ -330,13 +406,14 @@ public class MockProcessorContextAPITest {
         assertThat(context.committed(), is(true));
     }
 
+    @SuppressWarnings("resource")
     @Test
     public void fullConstructorShouldSetAllExpectedAttributes() {
         final Properties config = new Properties();
         config.put(StreamsConfig.APPLICATION_ID_CONFIG, "testFullConstructor");
-        config.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "");
-        config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass());
-        config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.Long().getClass());
+        config.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "mock-localhost:9092");
+        config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.StringSerde.class.getName());
+        config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.LongSerde.class.getName());
 
         final File dummyFile = new File("");
         final MockProcessorContext<Void, Void> context =
@@ -346,8 +423,8 @@ public class MockProcessorContextAPITest {
         assertThat(context.taskId(), is(new TaskId(1, 1)));
         assertThat(context.appConfigs().get(StreamsConfig.APPLICATION_ID_CONFIG), is("testFullConstructor"));
         assertThat(context.appConfigsWithPrefix("application.").get("id"), is("testFullConstructor"));
-        assertThat(context.keySerde().getClass(), is(Serdes.String().getClass()));
-        assertThat(context.valueSerde().getClass(), is(Serdes.Long().getClass()));
+        assertThat(context.keySerde().getClass(), is(Serdes.StringSerde.class));
+        assertThat(context.valueSerde().getClass(), is(Serdes.LongSerde.class));
         assertThat(context.stateDir(), is(dummyFile));
     }
 }

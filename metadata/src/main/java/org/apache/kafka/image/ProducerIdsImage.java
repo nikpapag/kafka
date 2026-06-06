@@ -18,60 +18,34 @@
 package org.apache.kafka.image;
 
 import org.apache.kafka.common.metadata.ProducerIdsRecord;
-import org.apache.kafka.server.common.ApiMessageAndVersion;
-
-import java.util.Collections;
-import java.util.List;
-import java.util.Objects;
-import java.util.function.Consumer;
-
+import org.apache.kafka.image.node.ProducerIdsImageNode;
+import org.apache.kafka.image.writer.ImageWriter;
 
 /**
  * Stores the highest seen producer ID in the metadata image.
- *
+ * <p>
  * This class is thread-safe.
+ *
+ * @param nextProducerId The next producer ID, or -1 in the special case where no producer IDs have been issued.
  */
-public final class ProducerIdsImage {
-    public final static ProducerIdsImage EMPTY = new ProducerIdsImage(-1L);
+public record ProducerIdsImage(long nextProducerId) {
+    public static final ProducerIdsImage EMPTY = new ProducerIdsImage(-1L);
 
-    private final long nextProducerId;
-
-    public ProducerIdsImage(long nextProducerId) {
-        this.nextProducerId = nextProducerId;
-    }
-
-    public long highestSeenProducerId() {
-        return nextProducerId;
-    }
-
-    public void write(Consumer<List<ApiMessageAndVersion>> out) {
+    public void write(ImageWriter writer) {
         if (nextProducerId >= 0) {
-            out.accept(Collections.singletonList(new ApiMessageAndVersion(
-                new ProducerIdsRecord().
-                    setBrokerId(-1).
-                    setBrokerEpoch(-1).
-                    setNextProducerId(nextProducerId), (short) 0)));
+            writer.write(0, new ProducerIdsRecord().
+                setBrokerId(-1).
+                setBrokerEpoch(-1).
+                setNextProducerId(nextProducerId));
         }
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (!(o instanceof ProducerIdsImage)) return false;
-        ProducerIdsImage other = (ProducerIdsImage) o;
-        return nextProducerId == other.nextProducerId;
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(nextProducerId);
+    public boolean isEmpty() {
+        return nextProducerId == EMPTY.nextProducerId;
     }
 
     @Override
     public String toString() {
-        return "ProducerIdsImage(highestSeenProducerId=" + nextProducerId + ")";
-    }
-
-    public boolean isEmpty() {
-        return nextProducerId < 0;
+        return new ProducerIdsImageNode(this).stringify();
     }
 }
