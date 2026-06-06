@@ -16,9 +16,17 @@
  */
 package org.apache.kafka.common.serialization;
 
-import static org.apache.kafka.common.serialization.Serdes.ListSerde.SerializationStrategy;
-import static org.apache.kafka.common.utils.Utils.mkEntry;
-import static org.apache.kafka.common.utils.Utils.mkMap;
+import org.apache.kafka.clients.CommonClientConfigs;
+import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.errors.SerializationException;
+import org.apache.kafka.common.header.Headers;
+import org.apache.kafka.common.header.internals.RecordHeaders;
+import org.apache.kafka.common.serialization.Serdes.ListSerde;
+import org.apache.kafka.common.utils.Utils;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
@@ -28,27 +36,20 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import org.apache.kafka.clients.CommonClientConfigs;
-import org.apache.kafka.common.KafkaException;
-import org.apache.kafka.common.config.ConfigException;
-import org.apache.kafka.common.errors.SerializationException;
-import org.apache.kafka.common.serialization.Serdes.ListSerde;
-import org.apache.kafka.common.utils.Utils;
+import static org.apache.kafka.common.serialization.Serdes.ListSerde.SerializationStrategy;
 
 public class ListDeserializer<Inner> implements Deserializer<List<Inner>> {
 
     final Logger log = LoggerFactory.getLogger(ListDeserializer.class);
 
-    private static final Map<Class<? extends Deserializer<?>>, Integer> FIXED_LENGTH_DESERIALIZERS = mkMap(
-        mkEntry(ShortDeserializer.class, Short.BYTES),
-        mkEntry(IntegerDeserializer.class, Integer.BYTES),
-        mkEntry(FloatDeserializer.class, Float.BYTES),
-        mkEntry(LongDeserializer.class, Long.BYTES),
-        mkEntry(DoubleDeserializer.class, Double.BYTES),
-        mkEntry(UUIDDeserializer.class, 36)
+    private static final Map<Class<? extends Deserializer<?>>, Integer> FIXED_LENGTH_DESERIALIZERS = Map.of(
+        ShortDeserializer.class, Short.BYTES,
+        IntegerDeserializer.class, Integer.BYTES,
+        FloatDeserializer.class, Float.BYTES,
+        LongDeserializer.class, Long.BYTES,
+        DoubleDeserializer.class, Double.BYTES,
+        UUIDDeserializer.class, 36
     );
 
     private Deserializer<Inner> inner;
@@ -159,6 +160,11 @@ public class ListDeserializer<Inner> implements Deserializer<List<Inner>> {
 
     @Override
     public List<Inner> deserialize(String topic, byte[] data) {
+        return deserialize(topic, new RecordHeaders(), data);
+    }
+
+    @Override
+    public List<Inner> deserialize(String topic, Headers headers, byte[] data) {
         if (data == null) {
             return null;
         }
@@ -183,7 +189,7 @@ public class ListDeserializer<Inner> implements Deserializer<List<Inner>> {
                     log.trace("Deserialized list so far: {}", deserializedList); // avoid logging actual data above TRACE level since it may contain sensitive information
                     throw new SerializationException("End of the stream was reached prematurely");
                 }
-                deserializedList.add(inner.deserialize(topic, payload));
+                deserializedList.add(inner.deserialize(topic, headers, payload));
             }
             return deserializedList;
         } catch (IOException e) {

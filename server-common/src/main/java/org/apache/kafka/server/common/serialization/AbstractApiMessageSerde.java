@@ -20,20 +20,19 @@ import org.apache.kafka.common.protocol.ApiMessage;
 import org.apache.kafka.common.protocol.ObjectSerializationCache;
 import org.apache.kafka.common.protocol.Readable;
 import org.apache.kafka.common.protocol.Writable;
-import org.apache.kafka.common.utils.ByteUtils;
+import org.apache.kafka.common.utils.internals.ByteUtils;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 
 /**
  * This is an implementation of {@code RecordSerde} with {@link ApiMessageAndVersion} but implementors need to implement
  * {@link #apiMessageFor(short)} to return a {@code ApiMessage} instance for the given {@code apiKey}.
- *
+ * <br>
  * This can be used as the underlying serialization mechanism for records defined with {@link ApiMessage}s.
- * <p></p>
+ * <br><br>
  * Serialization format for the given {@code ApiMessageAndVersion} is below:
- * <p></p>
  * <pre>
  *     [data_frame_version header message]
- *     header => [api_key version]
+ *     header =&gt; [api_key version]
  *
  *     data_frame_version   : This is the header version, current value is 0. Header includes both api_key and version.
  *     api_key              : apiKey of {@code ApiMessageAndVersion} object.

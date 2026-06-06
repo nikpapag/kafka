@@ -20,7 +20,7 @@ import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.Sensor.RecordingLevel;
 import org.apache.kafka.streams.processor.internals.metrics.StreamsMetricsImpl;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
 import java.util.Collections;
@@ -184,6 +184,23 @@ public class StateStoreMetricsTest {
     }
 
     @Test
+    public void shouldGetCommitSensor() {
+        final String metricName = "commit";
+        final String descriptionOfRate = "The average number of calls to commit per second";
+        final String descriptionOfAvg = "The average latency of calls to commit";
+        final String descriptionOfMax = "The maximum latency of calls to commit";
+        setupStreamsMetrics(metricName);
+
+        getAndVerifySensor(
+            () -> StateStoreMetrics.commitSensor(TASK_ID, STORE_TYPE, STORE_NAME, streamsMetrics),
+            metricName,
+            descriptionOfAvg,
+            descriptionOfMax,
+            descriptionOfRate
+        );
+    }
+
+    @Test
     public void shouldGetRemoveSensor() {
         final String metricName = "remove";
         final String descriptionOfRate = "The average number of calls to remove per second";
@@ -301,29 +318,21 @@ public class StateStoreMetricsTest {
     }
 
     @Test
-    public void shouldGetExpiredWindowRecordDropSensor() {
-        final String metricName = "expired-window-record-drop";
-        final String descriptionOfRate = "The average number of dropped records due to an expired window per second";
-        final String descriptionOfCount = "The total number of dropped records due to an expired window";
-        when(streamsMetrics.storeLevelSensor(TASK_ID, STORE_NAME, metricName, RecordingLevel.INFO))
-            .thenReturn(expectedSensor);
-        when(streamsMetrics.storeLevelTagMap(TASK_ID, STORE_TYPE, STORE_NAME)).thenReturn(storeTagMap);
+    public void shouldAddNumKeysGauge() {
+        @SuppressWarnings("unchecked")
+        final org.apache.kafka.common.metrics.Gauge<Long> gauge = mock(org.apache.kafka.common.metrics.Gauge.class);
 
-        try (final MockedStatic<StreamsMetricsImpl> streamsMetricsStaticMock = mockStatic(StreamsMetricsImpl.class)) {
-            final Sensor sensor =
-                StateStoreMetrics.expiredWindowRecordDropSensor(TASK_ID, STORE_TYPE, STORE_NAME, streamsMetrics);
-            streamsMetricsStaticMock.verify(
-                () -> StreamsMetricsImpl.addInvocationRateAndCountToSensor(
-                    expectedSensor,
-                    "stream-" + STORE_TYPE + "-metrics",
-                    storeTagMap,
-                    metricName,
-                    descriptionOfRate,
-                    descriptionOfCount
-                )
-            );
-            assertThat(sensor, is(expectedSensor));
-        }
+        StateStoreMetrics.addNumKeysGauge(TASK_ID, STORE_TYPE, STORE_NAME, streamsMetrics, gauge);
+
+        org.mockito.Mockito.verify(streamsMetrics).addStoreLevelMutableMetric(
+            TASK_ID,
+            STORE_TYPE,
+            STORE_NAME,
+            "num-keys",
+            "The current number of keys in the in-memory state store",
+            RecordingLevel.INFO,
+            gauge
+        );
     }
 
     @Test
