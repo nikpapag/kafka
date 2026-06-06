@@ -16,23 +16,29 @@
  */
 package org.apache.kafka.streams.processor.internals;
 
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.Serializer;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.kstream.Windowed;
-import org.apache.kafka.streams.processor.ProcessorContext;
 import org.apache.kafka.streams.processor.StateStore;
 import org.apache.kafka.streams.processor.StateStoreContext;
 import org.apache.kafka.streams.state.KeyValueIterator;
 import org.apache.kafka.streams.state.KeyValueStore;
 import org.apache.kafka.streams.state.SessionStore;
 import org.apache.kafka.streams.state.TimestampedKeyValueStore;
+import org.apache.kafka.streams.state.TimestampedKeyValueStoreWithHeaders;
 import org.apache.kafka.streams.state.TimestampedWindowStore;
 import org.apache.kafka.streams.state.ValueAndTimestamp;
+import org.apache.kafka.streams.state.ValueTimestampHeaders;
+import org.apache.kafka.streams.state.VersionedKeyValueStore;
+import org.apache.kafka.streams.state.VersionedRecord;
 import org.apache.kafka.streams.state.WindowStore;
 import org.apache.kafka.streams.state.WindowStoreIterator;
 import org.apache.kafka.streams.state.internals.WrappedStateStore;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 abstract class AbstractReadOnlyDecorator<T extends StateStore, K, V> extends WrappedStateStore<T, K, V> {
 
@@ -43,20 +49,19 @@ abstract class AbstractReadOnlyDecorator<T extends StateStore, K, V> extends Wra
     }
 
     @Override
+    @Deprecated
     public void flush() {
         throw new UnsupportedOperationException(ERROR_MESSAGE);
     }
 
-    @Deprecated
     @Override
-    public void init(final ProcessorContext context,
+    public void init(final StateStoreContext stateStoreContext,
                      final StateStore root) {
         throw new UnsupportedOperationException(ERROR_MESSAGE);
     }
 
     @Override
-    public void init(final StateStoreContext context,
-                     final StateStore root) {
+    public void commit(final Map<TopicPartition, Long> changelogOffsets) {
         throw new UnsupportedOperationException(ERROR_MESSAGE);
     }
 
@@ -66,8 +71,12 @@ abstract class AbstractReadOnlyDecorator<T extends StateStore, K, V> extends Wra
     }
 
     static StateStore getReadOnlyStore(final StateStore global) {
-        if (global instanceof TimestampedKeyValueStore) {
+        if (global instanceof TimestampedKeyValueStoreWithHeaders) {
+            return new TimestampedKeyValueStoreReadOnlyDecoratorWithHeaders<>((TimestampedKeyValueStoreWithHeaders<?, ?>) global);
+        } else if (global instanceof TimestampedKeyValueStore) {
             return new TimestampedKeyValueStoreReadOnlyDecorator<>((TimestampedKeyValueStore<?, ?>) global);
+        } else if (global instanceof VersionedKeyValueStore) {
+            return new VersionedKeyValueStoreReadOnlyDecorator<>((VersionedKeyValueStore<?, ?>) global);
         } else if (global instanceof KeyValueStore) {
             return new KeyValueStoreReadOnlyDecorator<>((KeyValueStore<?, ?>) global);
         } else if (global instanceof TimestampedWindowStore) {
@@ -159,6 +168,44 @@ abstract class AbstractReadOnlyDecorator<T extends StateStore, K, V> extends Wra
         }
     }
 
+    static class TimestampedKeyValueStoreReadOnlyDecoratorWithHeaders<K, V>
+        extends KeyValueStoreReadOnlyDecorator<K, ValueTimestampHeaders<V>>
+        implements TimestampedKeyValueStoreWithHeaders<K, V> {
+
+        private TimestampedKeyValueStoreReadOnlyDecoratorWithHeaders(final TimestampedKeyValueStoreWithHeaders<K, V> inner) {
+            super(inner);
+        }
+    }
+
+    static class VersionedKeyValueStoreReadOnlyDecorator<K, V>
+        extends AbstractReadOnlyDecorator<VersionedKeyValueStore<K, V>, K, V>
+        implements VersionedKeyValueStore<K, V> {
+
+        private VersionedKeyValueStoreReadOnlyDecorator(final VersionedKeyValueStore<K, V> inner) {
+            super(inner);
+        }
+
+        @Override
+        public long put(final K key, final V value, final long timestamp) {
+            throw new UnsupportedOperationException(ERROR_MESSAGE);
+        }
+
+        @Override
+        public VersionedRecord<V> delete(final K key, final long timestamp) {
+            throw new UnsupportedOperationException(ERROR_MESSAGE);
+        }
+
+        @Override
+        public VersionedRecord<V> get(final K key) {
+            return wrapped().get(key);
+        }
+
+        @Override
+        public VersionedRecord<V> get(final K key, final long asOfTimestamp) {
+            return wrapped().get(key, asOfTimestamp);
+        }
+    }
+
     static class WindowStoreReadOnlyDecorator<K, V>
         extends AbstractReadOnlyDecorator<WindowStore<K, V>, K, V>
         implements WindowStore<K, V> {
@@ -181,7 +228,6 @@ abstract class AbstractReadOnlyDecorator<T extends StateStore, K, V> extends Wra
         }
 
         @Override
-        @Deprecated
         public WindowStoreIterator<V> fetch(final K key,
                                             final long timeFrom,
                                             final long timeTo) {
@@ -196,7 +242,6 @@ abstract class AbstractReadOnlyDecorator<T extends StateStore, K, V> extends Wra
         }
 
         @Override
-        @Deprecated
         public KeyValueIterator<Windowed<K>, V> fetch(final K keyFrom,
                                                       final K keyTo,
                                                       final long timeFrom,
@@ -223,7 +268,6 @@ abstract class AbstractReadOnlyDecorator<T extends StateStore, K, V> extends Wra
         }
 
         @Override
-        @Deprecated
         public KeyValueIterator<Windowed<K>, V> fetchAll(final long timeFrom,
                                                          final long timeTo) {
             return wrapped().fetchAll(timeFrom, timeTo);
@@ -282,6 +326,75 @@ abstract class AbstractReadOnlyDecorator<T extends StateStore, K, V> extends Wra
         @Override
         public AGG fetchSession(final K key, final long earliestSessionEndTime, final long latestSessionStartTime) {
             return wrapped().fetchSession(key, earliestSessionEndTime, latestSessionStartTime);
+        }
+
+        @Override
+        public KeyValueIterator<Windowed<K>, AGG> findSessions(final long earliestSessionEndTime,
+                                                               final long latestSessionEndTime) {
+            return wrapped().findSessions(earliestSessionEndTime, latestSessionEndTime);
+        }
+
+        @Override
+        public AGG fetchSession(final K key,
+                                final Instant sessionStartTime,
+                                final Instant sessionEndTime) {
+            return wrapped().fetchSession(key, sessionStartTime, sessionEndTime);
+        }
+
+        @Override
+        public KeyValueIterator<Windowed<K>, AGG> backwardFindSessions(final K keyFrom,
+                                                                       final K keyTo,
+                                                                       final Instant earliestSessionEndTime,
+                                                                       final Instant latestSessionStartTime) {
+            return wrapped().backwardFindSessions(keyFrom, keyTo, earliestSessionEndTime, latestSessionStartTime);
+        }
+
+        @Override
+        public KeyValueIterator<Windowed<K>, AGG> findSessions(final K keyFrom,
+                                                               final K keyTo,
+                                                               final Instant earliestSessionEndTime,
+                                                               final Instant latestSessionStartTime) {
+            return wrapped().findSessions(keyFrom, keyTo, earliestSessionEndTime, latestSessionStartTime);
+        }
+
+        @Override
+        public KeyValueIterator<Windowed<K>, AGG> backwardFetch(final K key) {
+            return wrapped().backwardFetch(key);
+        }
+
+        @Override
+        public KeyValueIterator<Windowed<K>, AGG> backwardFetch(final K keyFrom,
+                                                                final K keyTo) {
+            return wrapped().backwardFetch(keyFrom, keyTo);
+        }
+
+        @Override
+        public KeyValueIterator<Windowed<K>, AGG> backwardFindSessions(final K key,
+                                                                       final long earliestSessionEndTime,
+                                                                       final long latestSessionStartTime) {
+            return wrapped().backwardFindSessions(key, earliestSessionEndTime, latestSessionStartTime);
+        }
+
+        @Override
+        public KeyValueIterator<Windowed<K>, AGG> backwardFindSessions(final K keyFrom,
+                                                                       final K keyTo,
+                                                                       final long earliestSessionEndTime,
+                                                                       final long latestSessionStartTime) {
+            return wrapped().backwardFindSessions(keyFrom, keyTo, earliestSessionEndTime, latestSessionStartTime);
+        }
+
+        @Override
+        public KeyValueIterator<Windowed<K>, AGG> backwardFindSessions(final K key,
+                                                                       final Instant earliestSessionEndTime,
+                                                                       final Instant latestSessionStartTime) {
+            return wrapped().backwardFindSessions(key, earliestSessionEndTime, latestSessionStartTime);
+        }
+
+        @Override
+        public KeyValueIterator<Windowed<K>, AGG> findSessions(final K key,
+                                                               final Instant earliestSessionEndTime,
+                                                               final Instant latestSessionStartTime) {
+            return wrapped().findSessions(key, earliestSessionEndTime, latestSessionStartTime);
         }
 
         @Override
