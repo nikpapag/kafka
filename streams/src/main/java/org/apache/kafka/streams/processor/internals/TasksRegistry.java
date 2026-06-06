@@ -35,59 +35,63 @@ public interface TasksRegistry {
 
     void clearPendingTasksToCreate();
 
-    Set<TopicPartition> removePendingTaskToRecycle(final TaskId taskId);
+    Set<Task> drainPendingTasksToInit();
 
-    void addPendingTaskToRecycle(final TaskId taskId, final Set<TopicPartition> inputPartitions);
+    Set<StreamTask> drainPendingActiveTasksToInit();
 
-    Set<TopicPartition> removePendingTaskToUpdateInputPartitions(final TaskId taskId);
+    Set<StandbyTask> drainPendingStandbyTasksToInit();
 
-    void addPendingTaskToUpdateInputPartitions(final TaskId taskId, final Set<TopicPartition> inputPartitions);
+    Set<Task> pendingTasksToInit();
 
-    boolean removePendingTaskToCloseDirty(final TaskId taskId);
+    void addPendingTasksToInit(final Collection<? extends Task> tasks);
 
-    void addPendingTaskToCloseDirty(final TaskId taskId);
+    boolean hasPendingTasksToInit();
 
-    boolean removePendingTaskToCloseClean(final TaskId taskId);
+    Set<Task> pendingTasksToClose();
 
-    void addPendingTaskToCloseClean(final TaskId taskId);
+    void addPendingTasksToClose(final Collection<? extends Task> tasks);
 
-    Set<Task> drainPendingTaskToInit();
+    boolean hasPendingTasksToClose();
 
-    void addPendingTaskToInit(final Collection<Task> tasks);
+    void addActiveTasks(final Collection<StreamTask> tasks);
 
-    boolean removePendingActiveTaskToSuspend(final TaskId taskId);
-
-    void addPendingActiveTaskToSuspend(final TaskId taskId);
-
-    void addActiveTasks(final Collection<Task> tasks);
-
-    void addStandbyTasks(final Collection<Task> tasks);
+    void addStandbyTasks(final Collection<StandbyTask> tasks);
 
     void addTask(final Task task);
 
-    void removeTask(final Task taskToRemove);
+    void addActiveTask(final StreamTask task);
 
-    void replaceActiveWithStandby(final StandbyTask standbyTask);
+    void addStandbyTask(final StandbyTask task);
+
+    void addFailedTask(final Task task);
+
+    void removeTask(final Task taskToRemove);
 
     void replaceStandbyWithActive(final StreamTask activeTask);
 
-    boolean updateActiveTaskInputPartitions(final Task task, final Set<TopicPartition> topicPartitions);
+    boolean updateActiveTaskInputPartitions(final StreamTask task, final Set<TopicPartition> topicPartitions);
 
     void clear();
 
-    Task activeTasksForInputPartition(final TopicPartition partition);
+    StreamTask activeInitializedTasksForInputPartition(final TopicPartition partition);
 
-    Task task(final TaskId taskId);
+    Task initializedTask(final TaskId taskId);
 
-    Collection<Task> tasks(final Collection<TaskId> taskIds);
+    Collection<Task> initializedTasks(final Collection<TaskId> taskIds);
 
-    Collection<Task> activeTasks();
+    Collection<TaskId> activeInitializedTaskIds();
 
-    Set<Task> allTasks();
+    Collection<StreamTask> activeInitializedTasks();
 
-    Map<TaskId, Task> allTasksPerId();
+    Collection<StandbyTask> standbyInitializedTasks();
 
-    Set<TaskId> allTaskIds();
+    Set<Task> allInitializedTasks();
 
-    boolean contains(final TaskId taskId);
+    Set<Task> allNonFailedInitializedTasks();
+
+    Map<TaskId, Task> allInitializedTasksPerId();
+
+    Set<TaskId> allInitializedTaskIds();
+
+    boolean containsInitialized(final TaskId taskId);
 }

@@ -31,6 +31,7 @@ import org.apache.kafka.streams.state.Stores;
 import org.apache.kafka.streams.state.WindowBytesStoreSupplier;
 import org.apache.kafka.streams.state.WindowStore;
 import org.apache.kafka.test.TestUtils;
+
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -47,7 +48,6 @@ import static java.util.Arrays.asList;
 import static org.apache.kafka.common.utils.Utils.mkEntry;
 import static org.apache.kafka.common.utils.Utils.mkMap;
 import static org.apache.kafka.common.utils.Utils.mkProperties;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class MockProcessorContextStateStoreTest {
 
@@ -150,32 +150,27 @@ public class MockProcessorContextStateStoreTest {
         return values.stream();
     }
 
-    @ParameterizedTest(name = "builder = {0}, timestamped = {1}, caching = {2}, logging = {3}")
+    @ParameterizedTest
     @MethodSource(value = "parameters")
-    public void shouldEitherInitOrThrow(final StoreBuilder<StateStore> builder,
-                                        final boolean timestamped,
-                                        final boolean caching,
-                                        final boolean logging) {
+    public void shouldWorkForAllStoreTypeAndSetups(
+        final StoreBuilder<StateStore> builder,
+        final boolean timestamped,
+        final boolean caching,
+        final boolean logging
+    ) {
         final File stateDir = TestUtils.tempDirectory();
         try {
             final MockProcessorContext<Void, Void> context = new MockProcessorContext<>(
                 mkProperties(mkMap(
                     mkEntry(StreamsConfig.APPLICATION_ID_CONFIG, ""),
-                    mkEntry(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "")
+                    mkEntry(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "mock-localhost:9092")
                 )),
                 new TaskId(0, 0),
                 stateDir
             );
             final StateStore store = builder.build();
-            if (caching || logging) {
-                assertThrows(
-                    IllegalArgumentException.class,
-                    () -> store.init(context.getStateStoreContext(), store)
-                );
-            } else {
-                store.init(context.getStateStoreContext(), store);
-                store.close();
-            }
+            store.init(context.getStateStoreContext(), store);
+            store.close();
         } finally {
             try {
                 Utils.delete(stateDir);
