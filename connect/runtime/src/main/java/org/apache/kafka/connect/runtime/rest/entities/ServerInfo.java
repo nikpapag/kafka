@@ -16,9 +16,10 @@
  */
 package org.apache.kafka.connect.runtime.rest.entities;
 
+import org.apache.kafka.common.utils.internals.AppInfoParser;
+
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import org.apache.kafka.common.utils.AppInfoParser;
 
 public class ServerInfo {
     private final String version;
