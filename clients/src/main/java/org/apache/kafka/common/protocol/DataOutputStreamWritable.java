@@ -17,8 +17,8 @@
 
 package org.apache.kafka.common.protocol;
 
-import org.apache.kafka.common.utils.ByteUtils;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.common.utils.internals.ByteUtils;
 
 import java.io.Closeable;
 import java.io.DataOutputStream;
@@ -99,7 +99,7 @@ public class DataOutputStreamWritable implements Writable, Closeable {
     public void writeByteBuffer(ByteBuffer buf) {
         try {
             if (buf.hasArray()) {
-                out.write(buf.array(), buf.position(), buf.limit());
+                out.write(buf.array(), buf.arrayOffset() + buf.position(), buf.remaining());
             } else {
                 byte[] bytes = Utils.toArray(buf);
                 out.write(bytes);

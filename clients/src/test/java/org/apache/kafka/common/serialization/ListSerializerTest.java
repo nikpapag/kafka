@@ -16,18 +16,28 @@
  */
 package org.apache.kafka.common.serialization;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.header.Headers;
+import org.apache.kafka.common.header.internals.RecordHeaders;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 
 public class ListSerializerTest {
@@ -43,7 +53,7 @@ public class ListSerializerTest {
         listSerializer.configure(props, true);
         final Serializer<?> inner = listSerializer.getInnerSerializer();
         assertNotNull(inner, "Inner serializer should be not null");
-        assertTrue(inner instanceof StringSerializer, "Inner serializer type should be StringSerializer");
+        assertInstanceOf(StringSerializer.class, inner, "Inner serializer type should be StringSerializer");
     }
 
     @Test
@@ -52,7 +62,7 @@ public class ListSerializerTest {
         listSerializer.configure(props, false);
         final Serializer<?> inner = listSerializer.getInnerSerializer();
         assertNotNull(inner, "Inner serializer should be not null");
-        assertTrue(inner instanceof StringSerializer, "Inner serializer type should be StringSerializer");
+        assertInstanceOf(StringSerializer.class, inner, "Inner serializer type should be StringSerializer");
     }
 
     @Test
@@ -61,7 +71,7 @@ public class ListSerializerTest {
         listSerializer.configure(props, true);
         final Serializer<?> inner = listSerializer.getInnerSerializer();
         assertNotNull(inner, "Inner serializer should be not null");
-        assertTrue(inner instanceof StringSerializer, "Inner serializer type should be StringSerializer");
+        assertInstanceOf(StringSerializer.class, inner, "Inner serializer type should be StringSerializer");
     }
 
     @Test
@@ -70,7 +80,7 @@ public class ListSerializerTest {
         listSerializer.configure(props, false);
         final Serializer<?> inner = listSerializer.getInnerSerializer();
         assertNotNull(inner, "Inner serializer should be not null");
-        assertTrue(inner instanceof StringSerializer, "Inner serializer type should be StringSerializer");
+        assertInstanceOf(StringSerializer.class, inner, "Inner serializer type should be StringSerializer");
     }
 
     @Test
@@ -148,6 +158,24 @@ public class ListSerializerTest {
             () -> initializedListSerializer.configure(props, false)
         );
         assertEquals("List serializer was already initialized using a non-default constructor", exception.getMessage());
+    }
+
+    @Test
+    public void shouldPassHeadersToUnderlyingSerializer() {
+        final Serializer<String> mockSerializer = mock(StringSerializer.class);
+        when(mockSerializer.serialize(anyString(), any(Headers.class), anyString())).thenReturn("test-value".getBytes());
+
+        final String topic = "topic";
+        final String key = "test-key";
+        final List<String> data = List.of(key);
+        final Headers headers = new RecordHeaders().add("key1", "value1".getBytes());
+
+        final ListSerializer<String> testSerializer = new ListSerializer<>(mockSerializer);
+
+        testSerializer.serialize(topic, headers, data);
+
+        verify(mockSerializer).serialize(topic, headers, key);
+        verify(mockSerializer, never()).serialize(topic, key);
     }
 
 }
