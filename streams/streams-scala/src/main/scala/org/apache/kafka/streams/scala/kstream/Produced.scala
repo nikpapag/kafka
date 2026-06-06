@@ -20,6 +20,7 @@ import org.apache.kafka.common.serialization.Serde
 import org.apache.kafka.streams.kstream.{Produced => ProducedJ}
 import org.apache.kafka.streams.processor.StreamPartitioner
 
+@deprecated("Use `org.apache.kafka.streams.kstream.Produced` instead", "4.3.0")
 object Produced {
 
   /**
@@ -43,9 +44,9 @@ object Produced {
    * @tparam V          value type
    * @param partitioner the function used to determine how records are distributed among partitions of the topic,
    *                    if not specified and `keySerde` provides a
-   *                    [[org.apache.kafka.streams.kstream.internals.WindowedSerializer]] for the key
-   *                    [[org.apache.kafka.streams.kstream.internals.WindowedStreamPartitioner]] will be
-   *                    used&mdash;otherwise [[org.apache.kafka.clients.producer.internals.DefaultPartitioner]]
+   *                    `org.apache.kafka.streams.kstream.internals.WindowedSerializer` for the key
+   *                    `org.apache.kafka.streams.kstream.internals.WindowedStreamPartitioner` will be
+   *                    used&mdash;otherwise `org.apache.kafka.clients.producer.internals.DefaultPartitioner`
    *                    will be used
    * @param keySerde    Serde to use for serializing the key
    * @param valueSerde  Serde to use for serializing the value
