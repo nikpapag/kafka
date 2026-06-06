@@ -16,9 +16,9 @@
  */
 package org.apache.kafka.streams.state.internals;
 
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.streams.kstream.Windowed;
-import org.apache.kafka.streams.processor.ProcessorContext;
 import org.apache.kafka.streams.processor.StateStore;
 import org.apache.kafka.streams.processor.StateStoreContext;
 import org.apache.kafka.streams.query.Position;
@@ -31,11 +31,12 @@ import org.apache.kafka.streams.state.WindowStore;
 import org.apache.kafka.streams.state.WindowStoreIterator;
 
 import java.time.Instant;
+import java.util.Map;
 
 import static org.apache.kafka.streams.state.TimestampedBytesStore.convertToTimestampedFormat;
 import static org.apache.kafka.streams.state.internals.ValueAndTimestampDeserializer.rawValue;
 
-class WindowToTimestampedWindowByteStoreAdapter implements WindowStore<Bytes, byte[]> {
+public class WindowToTimestampedWindowByteStoreAdapter implements WindowStore<Bytes, byte[]> {
     final WindowStore<Bytes, byte[]> store;
 
     WindowToTimestampedWindowByteStoreAdapter(final WindowStore<Bytes, byte[]> store) {
@@ -49,7 +50,7 @@ class WindowToTimestampedWindowByteStoreAdapter implements WindowStore<Bytes, by
     public void put(final Bytes key,
                     final byte[] valueWithTimestamp,
                     final long windowStartTimestamp) {
-        store.put(key, valueWithTimestamp == null ? null : rawValue(valueWithTimestamp), windowStartTimestamp);
+        store.put(key, rawValue(valueWithTimestamp), windowStartTimestamp);
     }
 
     @Override
@@ -156,21 +157,25 @@ class WindowToTimestampedWindowByteStoreAdapter implements WindowStore<Bytes, by
         return store.name();
     }
 
-    @Deprecated
     @Override
-    public void init(final ProcessorContext context,
-                     final StateStore root) {
-        store.init(context, root);
+    public void init(final StateStoreContext stateStoreContext, final StateStore root) {
+        store.init(stateStoreContext, root);
     }
 
     @Override
-    public void init(final StateStoreContext context, final StateStore root) {
-        store.init(context, root);
+    public void commit(final Map<TopicPartition, Long> changelogOffsets) {
+        store.commit(changelogOffsets);
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public boolean managesOffsets() {
+        return store.managesOffsets();
     }
 
     @Override
-    public void flush() {
-        store.flush();
+    public Long committedOffset(final TopicPartition partition) {
+        return store.committedOffset(partition);
     }
 
     @Override

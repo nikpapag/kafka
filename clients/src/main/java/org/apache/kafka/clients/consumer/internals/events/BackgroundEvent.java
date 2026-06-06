@@ -16,8 +16,54 @@
  */
 package org.apache.kafka.clients.consumer.internals.events;
 
+import org.apache.kafka.clients.consumer.internals.ConsumerNetworkThread;
+
+import java.util.Objects;
+
 /**
- * This is the abstract definition of the events created by the background thread.
+ * This is the abstract definition of the events created by the {@link ConsumerNetworkThread network thread}.
  */
-abstract public class BackgroundEvent {
+public abstract class BackgroundEvent {
+
+    public enum Type {
+        ERROR,
+        PARTITIONS_ASSIGNED,
+        PARTITIONS_REMOVED,
+        STREAMS_TASKS_ASSIGNED,
+        STREAMS_ON_TASKS_REVOKED_CALLBACK_NEEDED,
+        STREAMS_ON_ALL_TASKS_LOST_CALLBACK_NEEDED
+    }
+
+    private final Type type;
+
+    /**
+     * The time in milliseconds when this event was enqueued.
+     * This field can be changed after the event is created, so it should not be used in hashCode or equals.
+     */
+    private long enqueuedMs;
+
+    protected BackgroundEvent(Type type) {
+        this.type = Objects.requireNonNull(type);
+    }
+
+    public Type type() {
+        return type;
+    }
+
+    public void setEnqueuedMs(long enqueuedMs) {
+        this.enqueuedMs = enqueuedMs;
+    }
+
+    public long enqueuedMs() {
+        return enqueuedMs;
+    }
+
+    protected String toStringBase() {
+        return "type=" + type + ", enqueuedMs=" + enqueuedMs;
+    }
+
+    @Override
+    public final String toString() {
+        return getClass().getSimpleName() + "{" + toStringBase() + "}";
+    }
 }

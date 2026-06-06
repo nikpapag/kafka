@@ -24,11 +24,11 @@ import java.util.regex.Pattern;
 /**
  * Utilities for expanding strings that have range expressions in them.
  *
- * For example, 'foo[1-3]' would be expaneded to foo1, foo2, foo3.
+ * For example, 'foo[1-3]' would be expanded to foo1, foo2, foo3.
  * Strings that have no range expressions will not be expanded.
  */
 public class StringExpander {
-    private final static Pattern NUMERIC_RANGE_PATTERN =
+    private static final Pattern NUMERIC_RANGE_PATTERN =
         Pattern.compile("(.*)\\[([0-9]*)\\-([0-9]*)\\](.*)");
 
     public static HashSet<String> expand(String val) {

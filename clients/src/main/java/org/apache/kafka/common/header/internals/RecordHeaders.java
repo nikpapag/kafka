@@ -18,8 +18,8 @@ package org.apache.kafka.common.header.internals;
 
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.header.Headers;
-import org.apache.kafka.common.record.Record;
-import org.apache.kafka.common.utils.AbstractIterator;
+import org.apache.kafka.common.record.internal.Record;
+import org.apache.kafka.common.utils.internals.AbstractIterator;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -108,6 +108,10 @@ public class RecordHeaders implements Headers {
         this.isReadOnly = true;
     }
 
+    public boolean isReadOnly() {
+        return isReadOnly;
+    }
+
     public Header[] toArray() {
         return headers.isEmpty() ? Record.EMPTY_HEADERS : headers.toArray(new Header[0]);     
     }
@@ -123,7 +127,7 @@ public class RecordHeaders implements Headers {
     }
 
     private Iterator<Header> closeAware(final Iterator<Header> original) {
-        return new Iterator<Header>() {
+        return new Iterator<>() {
             @Override
             public boolean hasNext() {
                 return original.hasNext();
