@@ -18,16 +18,14 @@
 package org.apache.kafka.image;
 
 import org.apache.kafka.common.config.ConfigResource;
-import org.apache.kafka.server.common.ApiMessageAndVersion;
+import org.apache.kafka.image.node.ConfigurationsImageNode;
+import org.apache.kafka.image.writer.ImageWriter;
 
 import java.util.Collections;
-import java.util.List;
-import java.util.Map.Entry;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Properties;
-import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 
 /**
@@ -37,7 +35,7 @@ import java.util.stream.Collectors;
  */
 public final class ConfigurationsImage {
     public static final ConfigurationsImage EMPTY =
-        new ConfigurationsImage(Collections.emptyMap());
+        new ConfigurationsImage(Map.of());
 
     private final Map<ConfigResource, ConfigurationImage> data;
 
@@ -49,7 +47,7 @@ public final class ConfigurationsImage {
         return data.isEmpty();
     }
 
-    Map<ConfigResource, ConfigurationImage> resourceData() {
+    public Map<ConfigResource, ConfigurationImage> resourceData() {
         return data;
     }
 
@@ -62,18 +60,30 @@ public final class ConfigurationsImage {
         }
     }
 
-    public void write(Consumer<List<ApiMessageAndVersion>> out) {
+    /**
+     * Return the underlying config data for a given resource as an immutable map. This does not apply
+     * configuration overrides or include entity defaults for the resource type.
+     */
+    public Map<String, String> configMapForResource(ConfigResource configResource) {
+        ConfigurationImage configurationImage = data.get(configResource);
+        if (configurationImage != null) {
+            return configurationImage.toMap();
+        } else {
+            return Map.of();
+        }
+    }
+
+    public void write(ImageWriter writer) {
         for (Entry<ConfigResource, ConfigurationImage> entry : data.entrySet()) {
             ConfigResource configResource = entry.getKey();
             ConfigurationImage configImage = entry.getValue();
-            configImage.write(configResource, out);
+            configImage.write(configResource, writer);
         }
     }
 
     @Override
     public boolean equals(Object o) {
-        if (!(o instanceof ConfigurationsImage)) return false;
-        ConfigurationsImage other = (ConfigurationsImage) o;
+        if (!(o instanceof ConfigurationsImage other)) return false;
         return data.equals(other.data);
     }
 
@@ -84,8 +94,6 @@ public final class ConfigurationsImage {
 
     @Override
     public String toString() {
-        return "ConfigurationsImage(data=" + data.entrySet().stream().
-            map(e -> e.getKey() + ":" + e.getValue()).collect(Collectors.joining(", ")) +
-            ")";
+        return new ConfigurationsImageNode(this).stringify();
     }
 }

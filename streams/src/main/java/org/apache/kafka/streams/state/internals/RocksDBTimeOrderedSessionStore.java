@@ -16,7 +16,6 @@
  */
 package org.apache.kafka.streams.state.internals;
 
-import java.util.Objects;
 import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.streams.kstream.Windowed;
 import org.apache.kafka.streams.processor.StateStore;
@@ -29,21 +28,23 @@ import org.apache.kafka.streams.state.KeyValueIterator;
 import org.apache.kafka.streams.state.SessionStore;
 import org.apache.kafka.streams.state.internals.PrefixedSessionKeySchemas.TimeFirstSessionKeySchema;
 
+import java.util.Objects;
+
 public class RocksDBTimeOrderedSessionStore
-    extends WrappedStateStore<RocksDBTimeOrderedSessionSegmentedBytesStore, Object, Object>
+    extends WrappedStateStore<AbstractRocksDBTimeOrderedSegmentedBytesStore<? extends Segment>, Object, Object>
     implements SessionStore<Bytes, byte[]> {
 
     private StateStoreContext stateStoreContext;
 
-    RocksDBTimeOrderedSessionStore(final RocksDBTimeOrderedSessionSegmentedBytesStore store) {
+    RocksDBTimeOrderedSessionStore(final AbstractRocksDBTimeOrderedSegmentedBytesStore<? extends Segment> store) {
         super(store);
         Objects.requireNonNull(store, "store is null");
     }
 
     @Override
-    public void init(final StateStoreContext context, final StateStore root) {
-        wrapped().init(context, root);
-        this.stateStoreContext = context;
+    public void init(final StateStoreContext stateStoreContext, final StateStore root) {
+        wrapped().init(stateStoreContext, root);
+        this.stateStoreContext = stateStoreContext;
     }
 
     @Override
@@ -123,11 +124,11 @@ public class RocksDBTimeOrderedSessionStore
     @Override
     public byte[] fetchSession(final Bytes key,
                                final long sessionStartTime,
-                               final long sessiontEndTime) {
+                               final long sessionEndTime) {
         return wrapped().fetchSession(
             key,
             sessionStartTime,
-            sessiontEndTime
+            sessionEndTime
         );
     }
 

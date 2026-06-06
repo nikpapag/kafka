@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.streams.state.internals;
 
+import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.serialization.Serializer;
 import org.apache.kafka.common.utils.Bytes;
@@ -23,10 +24,10 @@ import org.apache.kafka.streams.kstream.Window;
 import org.apache.kafka.streams.kstream.Windowed;
 import org.apache.kafka.streams.kstream.internals.SessionWindow;
 
-import static org.apache.kafka.streams.state.StateSerdes.TIMESTAMP_SIZE;
-
 import java.nio.ByteBuffer;
 import java.util.List;
+
+import static org.apache.kafka.streams.state.StateSerdes.TIMESTAMP_SIZE;
 
 
 public class SessionKeySchema implements SegmentedBytesStore.KeySchema {
@@ -113,8 +114,9 @@ public class SessionKeySchema implements SegmentedBytesStore.KeySchema {
 
     private static <K> K extractKey(final byte[] binaryKey,
                                     final Deserializer<K> deserializer,
+                                    final Headers headers,
                                     final String topic) {
-        return deserializer.deserialize(topic, extractKeyBytes(binaryKey));
+        return deserializer.deserialize(topic, headers, extractKeyBytes(binaryKey));
     }
 
     static byte[] extractKeyBytes(final byte[] binaryKey) {
@@ -140,8 +142,9 @@ public class SessionKeySchema implements SegmentedBytesStore.KeySchema {
 
     public static <K> Windowed<K> from(final byte[] binaryKey,
                                        final Deserializer<K> keyDeserializer,
+                                       final Headers headers,
                                        final String topic) {
-        final K key = extractKey(binaryKey, keyDeserializer, topic);
+        final K key = extractKey(binaryKey, keyDeserializer, headers, topic);
         final Window window = extractWindow(binaryKey);
         return new Windowed<>(key, window);
     }
@@ -154,15 +157,17 @@ public class SessionKeySchema implements SegmentedBytesStore.KeySchema {
 
     public static <K> Windowed<K> from(final Windowed<Bytes> keyBytes,
                                        final Deserializer<K> keyDeserializer,
+                                       final Headers headers,
                                        final String topic) {
-        final K key = keyDeserializer.deserialize(topic, keyBytes.key().get());
+        final K key = keyDeserializer.deserialize(topic, headers, keyBytes.key().get());
         return new Windowed<>(key, keyBytes.window());
     }
 
     public static <K> byte[] toBinary(final Windowed<K> sessionKey,
                                       final Serializer<K> serializer,
+                                      final Headers headers,
                                       final String topic) {
-        final byte[] bytes = serializer.serialize(topic, sessionKey.key());
+        final byte[] bytes = serializer.serialize(topic, headers, sessionKey.key());
         return toBinary(Bytes.wrap(bytes), sessionKey.window().start(), sessionKey.window().end()).get();
     }
 
@@ -190,7 +195,7 @@ public class SessionKeySchema implements SegmentedBytesStore.KeySchema {
         // since the session window length can vary, we define the search boundary as:
         // lower: [0, ESET]
         // upper: [LSST, INF]
-        // and by puting the end time first and then the start time, the serialized search boundary
+        // and by putting the end time first and then the start time, the serialized search boundary
         // is: [(ESET-0), (INF-LSST)]
         buf.put(key.get());
         buf.putLong(endTime);
