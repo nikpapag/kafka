@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.streams.state.internals;
 
+import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.serialization.LongDeserializer;
 import org.apache.kafka.streams.kstream.internals.WrappingNullableDeserializer;
@@ -27,7 +28,8 @@ import java.util.Map;
 import static org.apache.kafka.streams.kstream.internals.WrappingNullableUtils.initNullableDeserializer;
 
 /**
- * The deserializer that is used for {@link TimestampedKeyAndJoinSide}, which is a combo key format of <timestamp, left/right flag, raw-key>
+ * The deserializer that is used for {@link TimestampedKeyAndJoinSide}, which is a combo key format of
+ * {@code <timestamp, left/right flag, raw-key>}.
  * @param <K> the raw key type
  */
 public class TimestampedKeyAndJoinSideDeserializer<K> implements WrappingNullableDeserializer<TimestampedKeyAndJoinSide<K>, K, Void> {
@@ -55,11 +57,17 @@ public class TimestampedKeyAndJoinSideDeserializer<K> implements WrappingNullabl
 
     @Override
     public TimestampedKeyAndJoinSide<K> deserialize(final String topic, final byte[] data) {
-        final boolean bool = data[StateSerdes.TIMESTAMP_SIZE] == 1;
-        final K key = keyDeserializer.deserialize(topic, rawKey(data));
-        final long timestamp = timestampDeserializer.deserialize(topic, rawTimestamp(data));
+        throw new UnsupportedOperationException("TimestampedKeyAndJoinSideDeserializer requires the headers-aware version of deserialize");
+    }
 
-        return TimestampedKeyAndJoinSide.make(bool, key, timestamp);
+    @Override
+    public TimestampedKeyAndJoinSide<K> deserialize(final String topic, final Headers headers, final byte[] data) {
+        final boolean isLeft = data[StateSerdes.TIMESTAMP_SIZE] == 1;
+        final K key = keyDeserializer.deserialize(topic, headers, rawKey(data));
+        final long timestamp = timestampDeserializer.deserialize(topic, headers, rawTimestamp(data));
+
+        return isLeft ? TimestampedKeyAndJoinSide.makeLeft(key, timestamp) :
+                TimestampedKeyAndJoinSide.makeRight(key, timestamp);
     }
 
     private byte[] rawTimestamp(final byte[] data) {
