@@ -18,6 +18,7 @@ package org.apache.kafka.streams.state.internals;
 
 import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.streams.query.Position;
 import org.apache.kafka.streams.state.internals.metrics.RocksDBMetricsRecorder;
 
 import java.io.File;
@@ -25,15 +26,22 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.Objects;
 
-class TimestampedSegment extends RocksDBTimestampedStore implements Comparable<TimestampedSegment>, Segment {
-    public final long id;
+class TimestampedSegment extends RocksDBTimestampedStore implements Segment {
+    private final long id;
 
     TimestampedSegment(final String segmentName,
                        final String windowName,
                        final long id,
+                       final Position position,
                        final RocksDBMetricsRecorder metricsRecorder) {
         super(segmentName, windowName, metricsRecorder);
         this.id = id;
+        this.position = position;
+    }
+
+    @Override
+    public long id() {
+        return id;
     }
 
     @Override
@@ -47,14 +55,8 @@ class TimestampedSegment extends RocksDBTimestampedStore implements Comparable<T
     }
 
     @Override
-    public int compareTo(final TimestampedSegment segment) {
-        return Long.compare(id, segment.id);
-    }
-
-    @Override
     public void openDB(final Map<String, Object> configs, final File stateDir) {
         super.openDB(configs, stateDir);
-        // skip the registering step
     }
 
     @Override
