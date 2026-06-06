@@ -17,66 +17,66 @@
 
 package org.apache.kafka.image;
 
+import org.apache.kafka.image.node.ClusterImageNode;
+import org.apache.kafka.image.writer.ImageWriter;
+import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.metadata.BrokerRegistration;
-import org.apache.kafka.server.common.ApiMessageAndVersion;
-import org.apache.kafka.server.common.MetadataVersion;
+import org.apache.kafka.metadata.ControllerRegistration;
 
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 /**
  * Represents the cluster in the metadata image.
- *
+ * <p>
  * This class is thread-safe.
  */
-public final class ClusterImage {
-    public static final ClusterImage EMPTY = new ClusterImage(Collections.emptyMap());
+public record ClusterImage(Map<Integer, BrokerRegistration> brokers, Map<Integer, ControllerRegistration> controllers) {
+    public static final ClusterImage EMPTY = new ClusterImage(
+        Map.of(),
+        Map.of());
 
-    private final Map<Integer, BrokerRegistration> brokers;
-
-    public ClusterImage(Map<Integer, BrokerRegistration> brokers) {
+    public ClusterImage(
+        Map<Integer, BrokerRegistration> brokers,
+        Map<Integer, ControllerRegistration> controllers
+    ) {
         this.brokers = Collections.unmodifiableMap(brokers);
+        this.controllers = Collections.unmodifiableMap(controllers);
     }
 
     public boolean isEmpty() {
         return brokers.isEmpty();
     }
 
-    public Map<Integer, BrokerRegistration> brokers() {
-        return brokers;
-    }
-
     public BrokerRegistration broker(int nodeId) {
         return brokers.get(nodeId);
     }
 
-    public void write(Consumer<List<ApiMessageAndVersion>> out, MetadataVersion metadataVersion) {
-        List<ApiMessageAndVersion> batch = new ArrayList<>();
-        for (BrokerRegistration broker : brokers.values()) {
-            batch.add(broker.toRecord(metadataVersion));
+    public long brokerEpoch(int brokerId) {
+        BrokerRegistration brokerRegistration = broker(brokerId);
+        if (brokerRegistration == null) {
+            return -1L;
         }
-        out.accept(batch);
+        return brokerRegistration.epoch();
     }
 
-    @Override
-    public int hashCode() {
-        return brokers.hashCode();
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (!(o instanceof ClusterImage)) return false;
-        ClusterImage other = (ClusterImage) o;
-        return brokers.equals(other.brokers);
+    public void write(ImageWriter writer, ImageWriterOptions options) {
+        for (BrokerRegistration broker : brokers.values()) {
+            writer.write(broker.toRecord(options));
+        }
+        if (!controllers.isEmpty()) {
+            if (!options.metadataVersion().isControllerRegistrationSupported()) {
+                options.handleLoss("controller registration data");
+            } else {
+                for (ControllerRegistration controller : controllers.values()) {
+                    writer.write(controller.toRecord(options));
+                }
+            }
+        }
     }
 
     @Override
     public String toString() {
-        return brokers.entrySet().stream().
-            map(e -> e.getKey() + ":" + e.getValue()).collect(Collectors.joining(", "));
+        return new ClusterImageNode(this).stringify();
     }
 }

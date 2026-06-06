@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.streams.state.internals;
 
+import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.serialization.Serializer;
 import org.apache.kafka.streams.kstream.internals.WrappingNullableSerializer;
 import org.apache.kafka.streams.processor.internals.SerdeGetter;
@@ -61,13 +62,18 @@ public class LeftOrRightValueSerializer<V1, V2> implements WrappingNullableSeria
 
     @Override
     public byte[] serialize(final String topic, final LeftOrRightValue<V1, V2> data) {
+        throw new UnsupportedOperationException("LeftOrRightValueSerializer requires the headers-aware version of serialize");
+    }
+
+    @Override
+    public byte[] serialize(final String topic, final Headers headers, final LeftOrRightValue<V1, V2> data) {
         if (data == null) {
             return null;
         }
 
-        final byte[] rawValue = (data.getLeftValue() != null)
-            ? leftSerializer.serialize(topic, data.getLeftValue())
-            : rightSerializer.serialize(topic, data.getRightValue());
+        final byte[] rawValue = (data.leftValue() != null)
+            ? leftSerializer.serialize(topic, headers, data.leftValue())
+            : rightSerializer.serialize(topic, headers, data.rightValue());
 
         if (rawValue == null) {
             return null;
@@ -75,7 +81,7 @@ public class LeftOrRightValueSerializer<V1, V2> implements WrappingNullableSeria
 
         return ByteBuffer
             .allocate(1 + rawValue.length)
-            .put((byte) (data.getLeftValue() != null ? 1 : 0))
+            .put((byte) (data.leftValue() != null ? 1 : 0))
             .put(rawValue)
             .array();
     }

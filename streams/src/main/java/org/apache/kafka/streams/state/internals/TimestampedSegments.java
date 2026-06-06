@@ -16,7 +16,7 @@
  */
 package org.apache.kafka.streams.state.internals;
 
-import org.apache.kafka.streams.processor.ProcessorContext;
+import org.apache.kafka.streams.processor.StateStoreContext;
 import org.apache.kafka.streams.processor.internals.ProcessorContextUtils;
 import org.apache.kafka.streams.state.internals.metrics.RocksDBMetricsRecorder;
 
@@ -36,26 +36,19 @@ class TimestampedSegments extends AbstractSegments<TimestampedSegment> {
     }
 
     @Override
-    public TimestampedSegment getOrCreateSegment(final long segmentId,
-                                                 final ProcessorContext context) {
-        if (segments.containsKey(segmentId)) {
-            return segments.get(segmentId);
-        } else {
-            final TimestampedSegment newSegment =
-                new TimestampedSegment(segmentName(segmentId), name, segmentId, metricsRecorder);
-
-            if (segments.put(segmentId, newSegment) != null) {
-                throw new IllegalStateException("TimestampedSegment already exists. Possible concurrent access.");
-            }
-
-            newSegment.openDB(context.appConfigs(), context.stateDir());
-            return newSegment;
-        }
+    protected TimestampedSegment createSegment(final long segmentId, final String segmentName) {
+        return new TimestampedSegment(segmentName, name, segmentId, position, metricsRecorder);
     }
 
     @Override
-    public void openExisting(final ProcessorContext context, final long streamTime) {
-        metricsRecorder.init(ProcessorContextUtils.getMetricsImpl(context), context.taskId());
+    protected void openSegmentDB(final TimestampedSegment segment, final StateStoreContext context) {
+        segment.setTaskId(context.taskId());
+        segment.openDB(context.appConfigs(), context.stateDir());
+    }
+
+    @Override
+    public void openExisting(final StateStoreContext context, final long streamTime) {
+        metricsRecorder.init(ProcessorContextUtils.metricsImpl(context), context.taskId());
         super.openExisting(context, streamTime);
     }
 }
