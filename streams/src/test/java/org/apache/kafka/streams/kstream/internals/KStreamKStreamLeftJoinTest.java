@@ -21,13 +21,13 @@ import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.streams.KeyValueTimestamp;
 import org.apache.kafka.streams.StreamsBuilder;
-import org.apache.kafka.streams.StreamsConfig.InternalConfig;
+import org.apache.kafka.streams.StreamsConfig;
+import org.apache.kafka.streams.TestInputTopic;
 import org.apache.kafka.streams.TopologyTestDriver;
 import org.apache.kafka.streams.TopologyWrapper;
 import org.apache.kafka.streams.kstream.Consumed;
 import org.apache.kafka.streams.kstream.JoinWindows;
 import org.apache.kafka.streams.kstream.KStream;
-import org.apache.kafka.streams.TestInputTopic;
 import org.apache.kafka.streams.kstream.StreamJoined;
 import org.apache.kafka.streams.state.Stores;
 import org.apache.kafka.streams.state.WindowBytesStoreSupplier;
@@ -35,37 +35,33 @@ import org.apache.kafka.test.MockApiProcessor;
 import org.apache.kafka.test.MockApiProcessorSupplier;
 import org.apache.kafka.test.MockValueJoiner;
 import org.apache.kafka.test.StreamsTestUtils;
-import org.junit.BeforeClass;
-import org.junit.Test;
+
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.Properties;
 import java.util.Set;
 
 import static java.time.Duration.ZERO;
 import static java.time.Duration.ofMillis;
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class KStreamKStreamLeftJoinTest {
-    private final static KeyValueTimestamp[] EMPTY = new KeyValueTimestamp[0];
+    private static final KeyValueTimestamp[] EMPTY = new KeyValueTimestamp[0];
 
     private final String topic1 = "topic1";
     private final String topic2 = "topic2";
     private final Consumed<Integer, String> consumed = Consumed.with(Serdes.Integer(), Serdes.String());
-    private final static Properties PROPS = StreamsTestUtils.getStreamsConfig(Serdes.String(), Serdes.String());
-
-    @BeforeClass
-    public static void beforeClass() {
-        PROPS.put(InternalConfig.EMIT_INTERVAL_MS_KSTREAMS_OUTER_JOIN_SPURIOUS_RESULTS_FIX, 0L);
-    }
+    private static final Properties PROPS = StreamsTestUtils.getStreamsConfig(Serdes.String(), Serdes.String());
 
     @SuppressWarnings("deprecation") // old join semantics; can be removed when `JoinWindows.of()` is removed
-    @Test
-    public void testLeftJoinWithSpuriousResultFixDisabledOldApi() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testLeftJoinWithSpuriousResultFixDisabledOldApi(final boolean withHeaders) {
+        setDslStoreFormat(withHeaders);
         final StreamsBuilder builder = new StreamsBuilder();
 
         final int[] expectedKeys = new int[] {0, 1, 2, 3};
@@ -124,8 +120,10 @@ public class KStreamKStreamLeftJoinTest {
     }
 
     @SuppressWarnings("deprecation") // old join semantics; can be removed when `JoinWindows.of()` is removed
-    @Test
-    public void testLeftJoinDuplicatesWithSpuriousResultFixDisabledOldApi() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testLeftJoinDuplicatesWithSpuriousResultFixDisabledOldApi(final boolean withHeaders) {
+        setDslStoreFormat(withHeaders);
         final StreamsBuilder builder = new StreamsBuilder();
 
         final KStream<Integer, String> stream1;
@@ -166,8 +164,10 @@ public class KStreamKStreamLeftJoinTest {
         }
     }
 
-    @Test
-    public void testLeftJoinDuplicates() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testLeftJoinDuplicates(final boolean withHeaders) {
+        setDslStoreFormat(withHeaders);
         final StreamsBuilder builder = new StreamsBuilder();
 
         final KStream<Integer, String> stream1;
@@ -222,8 +222,10 @@ public class KStreamKStreamLeftJoinTest {
         }
     }
 
-    @Test
-    public void testLeftExpiredNonJoinedRecordsAreEmittedByTheLeftProcessor() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testLeftExpiredNonJoinedRecordsAreEmittedByTheLeftProcessor(final boolean withHeaders) {
+        setDslStoreFormat(withHeaders);
         final StreamsBuilder builder = new StreamsBuilder();
 
         final KStream<Integer, String> stream1;
@@ -277,8 +279,10 @@ public class KStreamKStreamLeftJoinTest {
         }
     }
 
-    @Test
-    public void testLeftExpiredNonJoinedRecordsAreEmittedByTheRightProcessor() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testLeftExpiredNonJoinedRecordsAreEmittedByTheRightProcessor(final boolean withHeaders) {
+        setDslStoreFormat(withHeaders);
         final StreamsBuilder builder = new StreamsBuilder();
 
         final KStream<Integer, String> stream1;
@@ -332,8 +336,10 @@ public class KStreamKStreamLeftJoinTest {
         }
     }
 
-    @Test
-    public void testRightNonJoinedRecordsAreNeverEmittedByTheLeftProcessor() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testRightNonJoinedRecordsAreNeverEmittedByTheLeftProcessor(final boolean withHeaders) {
+        setDslStoreFormat(withHeaders);
         final StreamsBuilder builder = new StreamsBuilder();
 
         final KStream<Integer, String> stream1;
@@ -384,8 +390,10 @@ public class KStreamKStreamLeftJoinTest {
         }
     }
 
-    @Test
-    public void testRightNonJoinedRecordsAreNeverEmittedByTheRightProcessor() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testRightNonJoinedRecordsAreNeverEmittedByTheRightProcessor(final boolean withHeaders) {
+        setDslStoreFormat(withHeaders);
         final StreamsBuilder builder = new StreamsBuilder();
 
         final KStream<Integer, String> stream1;
@@ -436,8 +444,189 @@ public class KStreamKStreamLeftJoinTest {
         }
     }
 
-    @Test
-    public void testLeftJoinWithInMemoryCustomSuppliers() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testLeftJoinedRecordsWithZeroAfterAreEmitted(final boolean withHeaders) {
+        setDslStoreFormat(withHeaders);
+        final StreamsBuilder builder = new StreamsBuilder();
+
+        final int[] expectedKeys = new int[] {0, 1, 2, 3};
+
+        final KStream<Integer, String> stream1;
+        final KStream<Integer, String> stream2;
+        final KStream<Integer, String> joined;
+        final MockApiProcessorSupplier<Integer, String, Void, Void> supplier = new MockApiProcessorSupplier<>();
+        stream1 = builder.stream(topic1, consumed);
+        stream2 = builder.stream(topic2, consumed);
+        
+        joined = stream1.leftJoin(
+            stream2,
+            MockValueJoiner.TOSTRING_JOINER,
+            JoinWindows.ofTimeDifferenceWithNoGrace(ofMillis(100)).after(ZERO),
+            StreamJoined.with(Serdes.Integer(),
+                Serdes.String(),
+                Serdes.String())
+        );
+        joined.process(supplier);
+
+        final Collection<Set<String>> copartitionGroups =
+            TopologyWrapper.getInternalTopologyBuilder(builder.build()).copartitionGroups();
+
+        assertEquals(1, copartitionGroups.size());
+        assertEquals(Set.of(topic1, topic2), copartitionGroups.iterator().next());
+
+        try (final TopologyTestDriver driver = new TopologyTestDriver(builder.build(), PROPS)) {
+            final TestInputTopic<Integer, String> inputTopic1 =
+                    driver.createInputTopic(topic1, new IntegerSerializer(), new StringSerializer(), Instant.ofEpochMilli(0L), Duration.ZERO);
+            final TestInputTopic<Integer, String> inputTopic2 =
+                    driver.createInputTopic(topic2, new IntegerSerializer(), new StringSerializer(), Instant.ofEpochMilli(0L), Duration.ZERO);
+            final MockApiProcessor<Integer, String, Void, Void> processor = supplier.theCapturedProcessor();
+
+            processor.init(null);
+            
+            // push four items with increasing timestamps to the primary stream; the other window is empty; 
+            // this should emit the first three left-joined items;
+            // A3 is not triggered yet
+            // w1 = {}
+            // w2 = {}
+            // --> w1 = { 0:A0 (ts: 1000), 1:A1 (ts: 1001), 2:A2 (ts: 1002), 3:A3 (ts: 1003) }
+            //     w2 = {}
+            long time = 1000L;
+            for (int i = 0; i < expectedKeys.length; i++) {
+                inputTopic1.pipeInput(expectedKeys[i], "A" + expectedKeys[i], time + i);
+            }
+            processor.checkAndClearProcessResult(
+                    new KeyValueTimestamp<>(0, "A0+null", 1000L),
+                    new KeyValueTimestamp<>(1, "A1+null", 1001L),
+                    new KeyValueTimestamp<>(2, "A2+null", 1002L)
+            );
+            
+            // push four items smaller timestamps (out of window) to the secondary stream; 
+            // this should produce four joined items
+            // w1 = { 0:A0 (ts: 1000), 1:A1 (ts: 1001), 2:A2 (ts: 1002), 3:A3 (ts: 1003) }
+            // w2 = {}
+            // --> w1 = { 0:A0 (ts: 1000), 1:A1 (ts: 1001), 2:A2 (ts: 1002), 3:A3 (ts: 1003) }
+            //     w2 = { 0:a0 (ts: 999), 1:a1 (ts: 999), 2:a2 (ts: 999), 3:a3 (ts: 999) }
+            time = 1000L - 1L;
+            for (final int expectedKey : expectedKeys) {
+                inputTopic2.pipeInput(expectedKey, "a" + expectedKey, time);
+            }
+            processor.checkAndClearProcessResult(
+                    new KeyValueTimestamp<>(0, "A0+a0", 1000L),
+                    new KeyValueTimestamp<>(1, "A1+a1", 1001L),
+                    new KeyValueTimestamp<>(2, "A2+a2", 1002L),
+                    new KeyValueTimestamp<>(3, "A3+a3", 1003L)
+            );
+
+            // push four items with increased timestamps to the secondary stream; 
+            // this should produce four joined item
+            // w1 = { 0:A0 (ts: 1000), 1:A1 (ts: 1001), 2:A2 (ts: 1002), 3:A3 (ts: 1003) }
+            // w2 = { 0:a0 (ts: 999), 1:a1 (ts: 999), 2:a2 (ts: 999), 3:a3 (ts: 999) }
+            // --> w1 = { 0:A0 (ts: 1000), 1:A1 (ts: 1001), 2:A2 (ts: 1002), 3:A3 (ts: 1003) }
+            //     w2 = { 0:a0 (ts: 999), 1:a1 (ts: 999), 2:a2 (ts: 999), 3:a3 (ts: 999),
+            //            0:b0 (ts: 1000), 1:b1 (ts: 1000), 2:b2 (ts: 1000), 3:b3 (ts: 1000) }
+            time += 1L;
+            for (final int expectedKey : expectedKeys) {
+                inputTopic2.pipeInput(expectedKey, "b" + expectedKey, time);
+            }
+            processor.checkAndClearProcessResult(
+                    new KeyValueTimestamp<>(0, "A0+b0", 1000L),
+                    new KeyValueTimestamp<>(1, "A1+b1", 1001L),
+                    new KeyValueTimestamp<>(2, "A2+b2", 1002L),
+                    new KeyValueTimestamp<>(3, "A3+b3", 1003L)
+            );
+
+            // push four items with increased timestamps to the secondary stream; 
+            // this should produce only three joined items;
+            // c0 arrives too late to be joined with A0
+            // w1 = { 0:A0 (ts: 1000), 1:A1 (ts: 1001), 2:A2 (ts: 1002), 3:A3 (ts: 1003) }
+            // w2 = { 0:a0 (ts: 999), 1:a1 (ts: 999), 2:a2 (ts: 999), 3:a3 (ts: 999),
+            //        0:b0 (ts: 1000), 1:b1 (ts: 1000), 2:b2 (ts: 1000), 3:b3 (ts: 1000) }
+            // --> w1 = { 0:A0 (ts: 1000), 1:A1 (ts: 1001), 2:A2 (ts: 1002), 3:A3 (ts: 1003) }
+            //     w2 = { 0:a0 (ts: 999), 1:a1 (ts: 999), 2:a2 (ts: 999), 3:a3 (ts: 999),
+            //            0:b0 (ts: 1000), 1:b1 (ts: 1000), 2:b2 (ts: 1000), 3:b3 (ts: 1000),
+            //            0:c0 (ts: 1001), 1:c1 (ts: 1001), 2:c2 (ts: 1001), 3:c3 (ts: 1001) }
+            time += 1L;
+            for (final int expectedKey : expectedKeys) {
+                inputTopic2.pipeInput(expectedKey, "c" + expectedKey, time);
+            }
+            processor.checkAndClearProcessResult(
+                    new KeyValueTimestamp<>(1, "A1+c1", 1001L),
+                    new KeyValueTimestamp<>(2, "A2+c2", 1002L),
+                    new KeyValueTimestamp<>(3, "A3+c3", 1003L)
+            );
+
+            // push four items with increased timestamps to the secondary stream;
+            // this should produce only two joined items;
+            // d0 and d1 arrive too late to be joined with A0 and A1
+            // w1 = { 0:A0 (ts: 1000), 1:A1 (ts: 1001), 2:A2 (ts: 1002), 3:A3 (ts: 1003) }
+            // w2 = { 0:a0 (ts: 999), 1:a1 (ts: 999), 2:a2 (ts: 999), 3:a3 (ts: 999),
+            //        0:b0 (ts: 1000), 1:b1 (ts: 1000), 2:b2 (ts: 1000), 3:b3 (ts: 1000),
+            //        0:c0 (ts: 1001), 1:c1 (ts: 1001), 2:c2 (ts: 1001), 3:c3 (ts: 1001) }
+            // --> w1 = { 0:A0 (ts: 1000), 1:A1 (ts: 1001), 2:A2 (ts: 1002), 3:A3 (ts: 1003) }
+            //     w2 = { 0:a0 (ts: 999), 1:a1 (ts: 999), 2:a2 (ts: 999), 3:a3 (ts: 999),
+            //            0:b0 (ts: 1000), 1:b1 (ts: 1000), 2:b2 (ts: 1000), 3:b3 (ts: 1000),
+            //            0:c0 (ts: 1001), 1:c1 (ts: 1001), 2:c2 (ts: 1001), 3:c3 (ts: 1001),
+            //            0:d0 (ts: 1002), 1:d1 (ts: 1002), 2:d2 (ts: 1002), 3:d3 (ts: 1002) }
+            time += 1L;
+            for (final int expectedKey : expectedKeys) {
+                inputTopic2.pipeInput(expectedKey, "d" + expectedKey, time);
+            }
+            processor.checkAndClearProcessResult(
+                    new KeyValueTimestamp<>(2, "A2+d2", 1002L),
+                    new KeyValueTimestamp<>(3, "A3+d3", 1003L)
+            );
+
+            // push four items with increased timestamps to the secondary stream; 
+            // this should produce one joined item;
+            // only e3 can be joined with A3;
+            // e0, e1 and e2 arrive too late to be joined with A0, A1 and A2
+            // w1 = { 0:A0 (ts: 1000), 1:A1 (ts: 1001), 2:A2 (ts: 1002), 3:A3 (ts: 1003) }
+            // w2 = { 0:a0 (ts: 999), 1:a1 (ts: 999), 2:a2 (ts: 999), 3:a3 (ts: 999),
+            //        0:b0 (ts: 1000), 1:b1 (ts: 1000), 2:b2 (ts: 1000), 3:b3 (ts: 1000),
+            //        0:c0 (ts: 1001), 1:c1 (ts: 1001), 2:c2 (ts: 1001), 3:c3 (ts: 1001),
+            //        0:d0 (ts: 1002), 1:d1 (ts: 1002), 2:d2 (ts: 1002), 3:d3 (ts: 1002) }
+            // --> w1 = { 0:A0 (ts: 1000), 1:A1 (ts: 1001), 2:A2 (ts: 1002), 3:A3 (ts: 1003) }
+            //     w2 = { 0:a0 (ts: 999), 1:a1 (ts: 999), 2:a2 (ts: 999), 3:a3 (ts: 999),
+            //            0:b0 (ts: 1000), 1:b1 (ts: 1000), 2:b2 (ts: 1000), 3:b3 (ts: 1000),
+            //            0:c0 (ts: 1001), 1:c1 (ts: 1001), 2:c2 (ts: 1001), 3:c3 (ts: 1001),
+            //            0:d0 (ts: 1002), 1:d1 (ts: 1002), 2:d2 (ts: 1002), 3:d3 (ts: 1002),
+            //            0:e0 (ts: 1003), 1:e1 (ts: 1003), 2:e2 (ts: 1003), 3:e3 (ts: 1003) }
+            time += 1L;
+            for (final int expectedKey : expectedKeys) {
+                inputTopic2.pipeInput(expectedKey, "e" + expectedKey, time);
+            }
+            processor.checkAndClearProcessResult(
+                new KeyValueTimestamp<>(3, "A3+e3", 1003L)
+            );
+
+            // push four items with larger timestamps to the secondary stream;
+            // no (non-)joined items can be produced
+            // 
+            // w1 = { 0:A0 (ts: 1000), 1:A1 (ts: 1001), 2:A2 (ts: 1002), 3:A3 (ts: 1003) }
+            // w2 = { 0:a0 (ts: 999), 1:a1 (ts: 999), 2:a2 (ts: 999), 3:a3 (ts: 999),
+            //        0:b0 (ts: 1000), 1:b1 (ts: 1000), 2:b2 (ts: 1000), 3:b3 (ts: 1000),
+            //        0:c0 (ts: 1001), 1:c1 (ts: 1001), 2:c2 (ts: 1001), 3:c3 (ts: 1001),
+            //        0:d0 (ts: 1002), 1:d1 (ts: 1002), 2:d2 (ts: 1002), 3:d3 (ts: 1002),
+            //        0:e0 (ts: 1003), 1:e1 (ts: 1003), 2:e2 (ts: 1003), 3:e3 (ts: 1003) }
+            // --> w1 = { 0:A0 (ts: 1000), 1:A1 (ts: 1001), 2:A2 (ts: 1002), 3:A3 (ts: 1003) }
+            //     w2 = { 0:a0 (ts: 999), 1:a1 (ts: 999), 2:a2 (ts: 999), 3:a3 (ts: 999),
+            //            0:b0 (ts: 1000), 1:b1 (ts: 1000), 2:b2 (ts: 1000), 3:b3 (ts: 1000),
+            //            0:c0 (ts: 1001), 1:c1 (ts: 1001), 2:c2 (ts: 1001), 3:c3 (ts: 1001),
+            //            0:d0 (ts: 1002), 1:d1 (ts: 1002), 2:d2 (ts: 1002), 3:d3 (ts: 1002),
+            //            0:e0 (ts: 1003), 1:e1 (ts: 1003), 2:e2 (ts: 1003), 3:e3 (ts: 1003),
+            //            0:f0 (ts: 1100), 1:f1 (ts: 1100), 2:f2 (ts: 1100), 3:f3 (ts: 1100) }
+            time = 1000 + 100L;
+            for (final int expectedKey : expectedKeys) {
+                inputTopic2.pipeInput(expectedKey, "f" + expectedKey, time);
+            }
+            processor.checkAndClearProcessResult();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testLeftJoinWithInMemoryCustomSuppliers(final boolean withHeaders) {
         final JoinWindows joinWindows = JoinWindows.ofTimeDifferenceAndGrace(ofMillis(100L), ofMillis(0L));
 
         final WindowBytesStoreSupplier thisStoreSupplier = Stores.inMemoryWindowStore("in-memory-join-store",
@@ -450,19 +639,22 @@ public class KStreamKStreamLeftJoinTest {
 
         final StreamJoined<Integer, String, String> streamJoined = StreamJoined.with(Serdes.Integer(), Serdes.String(), Serdes.String());
 
-        runLeftJoin(streamJoined.withThisStoreSupplier(thisStoreSupplier).withOtherStoreSupplier(otherStoreSupplier), joinWindows);
+        runLeftJoin(streamJoined.withThisStoreSupplier(thisStoreSupplier).withOtherStoreSupplier(otherStoreSupplier), joinWindows, withHeaders);
     }
 
-    @Test
-    public void testLeftJoinWithDefaultSuppliers() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testLeftJoinWithDefaultSuppliers(final boolean withHeaders) {
         final JoinWindows joinWindows = JoinWindows.ofTimeDifferenceWithNoGrace(ofMillis(100L));
         final StreamJoined<Integer, String, String> streamJoined = StreamJoined.with(Serdes.Integer(), Serdes.String(), Serdes.String());
 
-        runLeftJoin(streamJoined, joinWindows);
+        runLeftJoin(streamJoined, joinWindows, withHeaders);
     }
 
     public void runLeftJoin(final StreamJoined<Integer, String, String> streamJoined,
-                            final JoinWindows joinWindows) {
+                            final JoinWindows joinWindows,
+                            final boolean withHeaders) {
+        setDslStoreFormat(withHeaders);
         final StreamsBuilder builder = new StreamsBuilder();
 
         final int[] expectedKeys = new int[] {0, 1, 2, 3};
@@ -486,7 +678,7 @@ public class KStreamKStreamLeftJoinTest {
             TopologyWrapper.getInternalTopologyBuilder(builder.build()).copartitionGroups();
 
         assertEquals(1, copartitionGroups.size());
-        assertEquals(new HashSet<>(Arrays.asList(topic1, topic2)), copartitionGroups.iterator().next());
+        assertEquals(Set.of(topic1, topic2), copartitionGroups.iterator().next());
 
         try (final TopologyTestDriver driver = new TopologyTestDriver(builder.build(), PROPS)) {
             final TestInputTopic<Integer, String> inputTopic1 =
@@ -574,8 +766,10 @@ public class KStreamKStreamLeftJoinTest {
         }
     }
 
-    @Test
-    public void testOrdering() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testOrdering(final boolean withHeaders) {
+        setDslStoreFormat(withHeaders);
         final StreamsBuilder builder = new StreamsBuilder();
 
         final KStream<Integer, String> stream1;
@@ -609,8 +803,9 @@ public class KStreamKStreamLeftJoinTest {
             inputTopic1.pipeInput(1, "A1", 100L);
             processor.checkAndClearProcessResult();
 
-            // push one item to the other window that has a join; this should produce non-joined records with a closed window first, then
-            // the joined records
+            // push one item to the other window that has a join; 
+            // this should produce the joined record first;
+            // then non-joined record with a closed window
             // by the time they were produced before
             // w1 = { 0:A0 (ts: 0), 1:A1 (ts: 100) }
             // w2 = { }
@@ -624,8 +819,10 @@ public class KStreamKStreamLeftJoinTest {
         }
     }
 
-    @Test
-    public void testGracePeriod() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testGracePeriod(final boolean withHeaders) {
+        setDslStoreFormat(withHeaders);
         final StreamsBuilder builder = new StreamsBuilder();
         final int[] expectedKeys = new int[] {0, 1, 2, 3};
 
@@ -648,7 +845,7 @@ public class KStreamKStreamLeftJoinTest {
             TopologyWrapper.getInternalTopologyBuilder(builder.build()).copartitionGroups();
 
         assertEquals(1, copartitionGroups.size());
-        assertEquals(new HashSet<>(Arrays.asList(topic1, topic2)), copartitionGroups.iterator().next());
+        assertEquals(Set.of(topic1, topic2), copartitionGroups.iterator().next());
 
         try (final TopologyTestDriver driver = new TopologyTestDriver(builder.build(), PROPS)) {
             final TestInputTopic<Integer, String> inputTopic1 =
@@ -696,8 +893,10 @@ public class KStreamKStreamLeftJoinTest {
         }
     }
 
-    @Test
-    public void testWindowing() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testWindowing(final boolean withHeaders) {
+        setDslStoreFormat(withHeaders);
         final StreamsBuilder builder = new StreamsBuilder();
         final int[] expectedKeys = new int[] {0, 1, 2, 3};
 
@@ -720,7 +919,7 @@ public class KStreamKStreamLeftJoinTest {
             TopologyWrapper.getInternalTopologyBuilder(builder.build()).copartitionGroups();
 
         assertEquals(1, copartitionGroups.size());
-        assertEquals(new HashSet<>(Arrays.asList(topic1, topic2)), copartitionGroups.iterator().next());
+        assertEquals(Set.of(topic1, topic2), copartitionGroups.iterator().next());
 
         try (final TopologyTestDriver driver = new TopologyTestDriver(builder.build(), PROPS)) {
             final TestInputTopic<Integer, String> inputTopic1 =
@@ -757,8 +956,10 @@ public class KStreamKStreamLeftJoinTest {
         }
     }
 
-    @Test
-    public void shouldNotEmitLeftJoinResultForAsymmetricWindow() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void shouldNotEmitLeftJoinResultForAsymmetricWindow(final boolean withHeaders) {
+        setDslStoreFormat(withHeaders);
         final StreamsBuilder builder = new StreamsBuilder();
         final int[] expectedKeys = new int[] {0, 1, 2, 3};
 
@@ -1139,5 +1340,20 @@ public class KStreamKStreamLeftJoinTest {
         // all previous late records were emitted immediately
         inputTopic1.pipeInput(0, "dummy", time + 300L);
         processor.checkAndClearProcessResult(new KeyValueTimestamp<>(0, "dummy+null", 1203L));
+    }
+
+    /**
+     * Configures the DSL store format to use headers if enabled.
+     * This is a helper method to reduce boilerplate in parameterized tests that test both
+     * with and without headers mode.
+     *
+     * @param withHeaders Whether to enable headers mode
+     */
+    private void setDslStoreFormat(final boolean withHeaders) {
+        if (withHeaders) {
+            PROPS.put(StreamsConfig.DSL_STORE_FORMAT_CONFIG, StreamsConfig.DSL_STORE_FORMAT_HEADERS);
+        } else {
+            PROPS.put(StreamsConfig.DSL_STORE_FORMAT_CONFIG, StreamsConfig.DSL_STORE_FORMAT_DEFAULT);
+        }
     }
 }

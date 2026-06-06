@@ -17,8 +17,13 @@
 package org.apache.kafka.streams.kstream.internals;
 
 import org.apache.kafka.clients.producer.internals.BuiltInPartitioner;
+import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.apache.kafka.streams.kstream.Windowed;
 import org.apache.kafka.streams.processor.StreamPartitioner;
+
+import java.util.Collections;
+import java.util.Optional;
+import java.util.Set;
 
 public class WindowedStreamPartitioner<K, V> implements StreamPartitioner<Windowed<K>, V> {
 
@@ -40,12 +45,12 @@ public class WindowedStreamPartitioner<K, V> implements StreamPartitioner<Window
      * @return an integer between 0 and {@code numPartitions-1}, or {@code null} if the default partitioning logic should be used
      */
     @Override
-    public Integer partition(final String topic, final Windowed<K> windowedKey, final V value, final int numPartitions) {
+    public Optional<Set<Integer>> partitions(final String topic, final Windowed<K> windowedKey, final V value, final int numPartitions) {
         // for windowed key, the key bytes should never be null
-        final byte[] keyBytes = serializer.serializeBaseKey(topic, windowedKey);
+        final byte[] keyBytes = serializer.serializeBaseKey(topic, new RecordHeaders(), windowedKey);
 
         // stick with the same built-in partitioner util functions that producer used
         // to make sure its behavior is consistent with the producer
-        return BuiltInPartitioner.partitionForKey(keyBytes, numPartitions);
+        return Optional.of(Collections.singleton(BuiltInPartitioner.partitionForKey(keyBytes, numPartitions)));
     }
 }
