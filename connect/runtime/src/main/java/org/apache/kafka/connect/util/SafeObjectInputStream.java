@@ -20,29 +20,27 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectStreamClass;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.Set;
 
+
+/**
+ * Security note: While it seems it possible to build a deserialization gadget to obtain RCE via
+ * FileOffsetBackingStore, it requires having write permissions on the filesystem of the Connect worker.
+ * For that reason the Apache Kafka project does not consider this a security issue.
+ */
 public class SafeObjectInputStream extends ObjectInputStream {
 
-    protected static final Set<String> DEFAULT_NO_DESERIALIZE_CLASS_NAMES;
-
-    static {
-
-        Set<String> s = new HashSet<>();
-        s.add("org.apache.commons.collections.functors.InvokerTransformer");
-        s.add("org.apache.commons.collections.functors.InstantiateTransformer");
-        s.add("org.apache.commons.collections4.functors.InvokerTransformer");
-        s.add("org.apache.commons.collections4.functors.InstantiateTransformer");
-        s.add("org.codehaus.groovy.runtime.ConvertedClosure");
-        s.add("org.codehaus.groovy.runtime.MethodClosure");
-        s.add("org.springframework.beans.factory.ObjectFactory");
-        s.add("com.sun.org.apache.xalan.internal.xsltc.trax.TemplatesImpl");
-        s.add("org.apache.xalan.xsltc.trax.TemplatesImpl");
-        DEFAULT_NO_DESERIALIZE_CLASS_NAMES = Collections.unmodifiableSet(s);
-    }
-
+    protected static final Set<String> DEFAULT_NO_DESERIALIZE_CLASS_NAMES = Set.of(
+            "org.apache.commons.collections.functors.InvokerTransformer",
+            "org.apache.commons.collections.functors.InstantiateTransformer",
+            "org.apache.commons.collections4.functors.InvokerTransformer",
+            "org.apache.commons.collections4.functors.InstantiateTransformer",
+            "org.codehaus.groovy.runtime.ConvertedClosure",
+            "org.codehaus.groovy.runtime.MethodClosure",
+            "org.springframework.beans.factory.ObjectFactory",
+            "com.sun.org.apache.xalan.internal.xsltc.trax.TemplatesImpl",
+            "org.apache.xalan.xsltc.trax.TemplatesImpl"
+    );
 
     public SafeObjectInputStream(InputStream in) throws IOException {
         super(in);

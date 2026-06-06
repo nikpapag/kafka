@@ -16,15 +16,16 @@
  */
 package org.apache.kafka.common.protocol;
 
+import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.network.Send;
-import org.apache.kafka.common.record.CompressionType;
-import org.apache.kafka.common.record.MemoryRecords;
-import org.apache.kafka.common.record.MemoryRecordsBuilder;
-import org.apache.kafka.common.record.SimpleRecord;
 import org.apache.kafka.common.record.TimestampType;
-import org.apache.kafka.common.record.UnalignedMemoryRecords;
+import org.apache.kafka.common.record.internal.MemoryRecords;
+import org.apache.kafka.common.record.internal.MemoryRecordsBuilder;
+import org.apache.kafka.common.record.internal.SimpleRecord;
+import org.apache.kafka.common.record.internal.UnalignedMemoryRecords;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.test.TestUtils;
+
 import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
@@ -155,7 +156,7 @@ public class SendBuilderTest {
     private MemoryRecords createRecords(ByteBuffer buffer, String value) {
         MemoryRecordsBuilder recordsBuilder = MemoryRecords.builder(
             buffer,
-            CompressionType.NONE,
+            Compression.NONE,
             TimestampType.CREATE_TIME,
             0L
         );

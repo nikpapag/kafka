@@ -16,15 +16,16 @@
  */
 package org.apache.kafka.connect.transforms.predicates;
 
-import java.util.Map;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
-
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.utils.AppInfoParser;
 import org.apache.kafka.connect.connector.ConnectRecord;
 import org.apache.kafka.connect.transforms.util.RegexValidator;
 import org.apache.kafka.connect.transforms.util.SimpleConfig;
+
+import java.util.Map;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * A predicate which is true for records with a topic name that matches the configured regular expression.
@@ -42,6 +43,11 @@ public class TopicNameMatches<R extends ConnectRecord<R>> implements Predicate<R
             ConfigDef.Importance.MEDIUM,
             "A Java regular expression for matching against the name of a record's topic.");
     private Pattern pattern;
+
+    @Override
+    public String version() {
+        return AppInfoParser.getVersion();
+    }
 
     @Override
     public ConfigDef config() {

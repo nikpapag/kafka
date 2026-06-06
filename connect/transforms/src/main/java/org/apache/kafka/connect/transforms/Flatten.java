@@ -21,6 +21,7 @@ import org.apache.kafka.common.cache.Cache;
 import org.apache.kafka.common.cache.LRUCache;
 import org.apache.kafka.common.cache.SynchronizedCache;
 import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.utils.AppInfoParser;
 import org.apache.kafka.connect.connector.ConnectRecord;
 import org.apache.kafka.connect.data.ConnectSchema;
 import org.apache.kafka.connect.data.Field;
@@ -76,6 +77,11 @@ public abstract class Flatten<R extends ConnectRecord<R>> implements Transformat
         } else {
             return applyWithSchema(record);
         }
+    }
+
+    @Override
+    public String version() {
+        return AppInfoParser.getVersion();
     }
 
     @Override

@@ -16,25 +16,37 @@
  */
 package org.apache.kafka.streams.processor.internals;
 
-import java.io.IOException;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
-
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.streams.errors.LockException;
 import org.apache.kafka.streams.errors.ProcessorStateException;
 import org.apache.kafka.streams.errors.StreamsException;
+import org.apache.kafka.streams.errors.TaskCorruptedException;
 import org.apache.kafka.streams.errors.TaskIdFormatException;
 import org.apache.kafka.streams.processor.StateStore;
 import org.apache.kafka.streams.processor.TaskId;
 import org.apache.kafka.streams.processor.internals.Task.TaskType;
+import org.apache.kafka.streams.state.SessionStore;
+import org.apache.kafka.streams.state.internals.PlainToHeadersStoreAdapter;
+import org.apache.kafka.streams.state.internals.PlainToHeadersWindowStoreAdapter;
 import org.apache.kafka.streams.state.internals.RecordConverter;
+import org.apache.kafka.streams.state.internals.TimestampedToHeadersStoreAdapter;
+import org.apache.kafka.streams.state.internals.TimestampedToHeadersWindowStoreAdapter;
+import org.apache.kafka.streams.state.internals.WrappedStateStore;
+
 import org.slf4j.Logger;
 
+import java.io.IOException;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+
 import static org.apache.kafka.streams.state.internals.RecordConverters.identity;
+import static org.apache.kafka.streams.state.internals.RecordConverters.rawValueToHeadersValue;
+import static org.apache.kafka.streams.state.internals.RecordConverters.rawValueToSessionHeadersValue;
 import static org.apache.kafka.streams.state.internals.RecordConverters.rawValueToTimestampedValue;
+import static org.apache.kafka.streams.state.internals.WrappedStateStore.isHeadersAware;
 import static org.apache.kafka.streams.state.internals.WrappedStateStore.isTimestamped;
+import static org.apache.kafka.streams.state.internals.WrappedStateStore.isVersioned;
 
 /**
  * Shared functions to handle state store registration and cleanup between
@@ -47,7 +59,41 @@ final class StateManagerUtil {
     private StateManagerUtil() {}
 
     static RecordConverter converterForStore(final StateStore store) {
-        return isTimestamped(store) ? rawValueToTimestampedValue() : identity();
+        // First check if the top-level store implements HeadersBytesStore or TimestampedBytesStore
+        if (isHeadersAware(store)) {
+            if (store instanceof SessionStore) {
+                return rawValueToSessionHeadersValue();
+            }
+            return rawValueToHeadersValue();
+        } else if (isTimestamped(store) && !isVersioned(store)) {
+            // should not prepend timestamp when restoring records for versioned store, as
+            // timestamp is used separately during put() process for restore of versioned stores
+            return rawValueToTimestampedValue();
+        }
+
+        // If top-level check didn't find the type, unwrap to find adapters
+        // This handles persistent stores that use adapters
+        StateStore current = store;
+        while (current != null) {
+            if (current instanceof TimestampedToHeadersStoreAdapter || current instanceof TimestampedToHeadersWindowStoreAdapter) {
+                // Adapter wraps a timestamped store, so restore in timestamped format
+                return rawValueToTimestampedValue();
+            } else if (current instanceof PlainToHeadersStoreAdapter || current instanceof PlainToHeadersWindowStoreAdapter) {
+                // Adapter wraps a plain store, so restore in plain format
+                return identity();
+            }
+
+            // If not a WrappedStateStore, we've reached the innermost store
+            if (!(current instanceof WrappedStateStore)) {
+                break;
+            }
+
+            // Unwrap one more level
+            current = ((WrappedStateStore<?, ?, ?>) current).wrapped();
+        }
+
+        // Default to identity if no special handling needed
+        return identity();
     }
 
     static boolean checkpointNeeded(final boolean enforceCheckpoint,
@@ -74,6 +120,7 @@ final class StateManagerUtil {
     }
 
     /**
+     * @throws TaskCorruptedException if the state cannot be reused (with EOS) and needs to be reset
      * @throws StreamsException If the store's changelog does not contain the partition
      */
     static void registerStateStores(final Logger log,
@@ -81,7 +128,7 @@ final class StateManagerUtil {
                                     final ProcessorTopology topology,
                                     final ProcessorStateManager stateMgr,
                                     final StateDirectory stateDirectory,
-                                    final InternalProcessorContext processorContext) {
+                                    final InternalProcessorContext<?, ?> processorContext) {
         if (topology.stateStores().isEmpty()) {
             return;
         }
@@ -100,7 +147,7 @@ final class StateManagerUtil {
         // We should only load checkpoint AFTER the corresponding state directory lock has been acquired and
         // the state stores have been registered; we should not try to load at the state manager construction time.
         // See https://issues.apache.org/jira/browse/KAFKA-8574
-        stateMgr.initializeStoreOffsetsFromCheckpoint(storeDirsEmpty);
+        stateMgr.initializeStoreOffsets(storeDirsEmpty);
         log.debug("Initialized state stores");
     }
 
@@ -131,6 +178,7 @@ final class StateManagerUtil {
                     try {
                         if (wipeStateStore) {
                             log.debug("Wiping state stores for {} task {}", taskType, id);
+                            stateDirectory.removeTaskOffsets(id);
                             // we can just delete the whole dir of the task, including the state store images and the checkpoint files,
                             // and then we write an empty checkpoint file indicating that the previous close is graceful and we just
                             // need to re-bootstrap the restoration from the beginning
@@ -140,6 +188,8 @@ final class StateManagerUtil {
                         stateDirectory.unlock(id);
                     }
                 }
+            } else {
+                log.warn("Unable to acquire lock while closing the state store for {} task {}", taskType, id);
             }
         } catch (final IOException e) {
             final ProcessorStateException exception = new ProcessorStateException(
@@ -172,7 +222,7 @@ final class StateManagerUtil {
 
             return new TaskId(topicGroupId, partition, namedTopology);
         } catch (final Exception e) {
-            throw new TaskIdFormatException(taskIdStr);
+            throw new TaskIdFormatException(taskIdStr, e);
         }
     }
 
