@@ -19,18 +19,14 @@ package org.apache.kafka.image;
 
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.metadata.TopicRecord;
+import org.apache.kafka.image.node.TopicImageNode;
+import org.apache.kafka.image.writer.ImageWriter;
+import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.metadata.PartitionRegistration;
-import org.apache.kafka.server.common.ApiMessageAndVersion;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map.Entry;
+import java.util.Collections;
 import java.util.Map;
-import java.util.Objects;
-import java.util.function.Consumer;
-import java.util.stream.Collectors;
-
-import static org.apache.kafka.common.metadata.MetadataRecordType.TOPIC_RECORD;
+import java.util.Map.Entry;
 
 
 /**
@@ -38,65 +34,24 @@ import static org.apache.kafka.common.metadata.MetadataRecordType.TOPIC_RECORD;
  *
  * This class is thread-safe.
  */
-public final class TopicImage {
-    private final String name;
-
-    private final Uuid id;
-
-    private final Map<Integer, PartitionRegistration> partitions;
-
-    public TopicImage(String name,
-                      Uuid id,
-                      Map<Integer, PartitionRegistration> partitions) {
-        this.name = name;
-        this.id = id;
-        this.partitions = partitions;
+public record TopicImage(String name, Uuid id, Map<Integer, PartitionRegistration> partitions) {
+    public TopicImage {
+        partitions = Collections.unmodifiableMap(partitions);
     }
 
-    public String name() {
-        return name;
-    }
-
-    public Uuid id() {
-        return id;
-    }
-
-    public Map<Integer, PartitionRegistration> partitions() {
-        return partitions;
-    }
-
-    public void write(Consumer<List<ApiMessageAndVersion>> out) {
-        List<ApiMessageAndVersion> batch = new ArrayList<>();
-        batch.add(new ApiMessageAndVersion(new TopicRecord().
+    public void write(ImageWriter writer, ImageWriterOptions options) {
+        writer.write(0, new TopicRecord().
             setName(name).
-            setTopicId(id), TOPIC_RECORD.highestSupportedVersion()));
+            setTopicId(id));
         for (Entry<Integer, PartitionRegistration> entry : partitions.entrySet()) {
             int partitionId = entry.getKey();
             PartitionRegistration partition = entry.getValue();
-            batch.add(partition.toRecord(id, partitionId));
+            writer.write(partition.toRecord(id, partitionId, options));
         }
-        out.accept(batch);
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (!(o instanceof TopicImage)) return false;
-        TopicImage other = (TopicImage) o;
-        return name.equals(other.name) &&
-            id.equals(other.id) &&
-            partitions.equals(other.partitions);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(name, id, partitions);
     }
 
     @Override
     public String toString() {
-        return "TopicImage(name=" + name + ", id=" + id + ", partitions=" +
-            partitions.entrySet().stream().
-                map(e -> e.getKey() + ":" + e.getValue()).
-                collect(Collectors.joining(", ")) + ")";
+        return new TopicImageNode(this).stringify();
     }
 }

@@ -20,20 +20,21 @@ package org.apache.kafka.trogdor.agent;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.internals.KafkaFutureImpl;
-import org.apache.kafka.common.utils.Scheduler;
-import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.common.utils.internals.ThreadUtils;
 import org.apache.kafka.trogdor.common.Platform;
+import org.apache.kafka.trogdor.common.Scheduler;
 import org.apache.kafka.trogdor.rest.RequestConflictException;
 import org.apache.kafka.trogdor.rest.WorkerDone;
 import org.apache.kafka.trogdor.rest.WorkerRunning;
 import org.apache.kafka.trogdor.rest.WorkerStarting;
-import org.apache.kafka.trogdor.rest.WorkerStopping;
 import org.apache.kafka.trogdor.rest.WorkerState;
+import org.apache.kafka.trogdor.rest.WorkerStopping;
 import org.apache.kafka.trogdor.task.AgentWorkerStatusTracker;
 import org.apache.kafka.trogdor.task.TaskSpec;
 import org.apache.kafka.trogdor.task.TaskWorker;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -332,7 +333,7 @@ public final class WorkerManager {
                 return worker.doneFuture;
             }
             KafkaFutureImpl<String> haltFuture = new KafkaFutureImpl<>();
-            haltFuture.thenApply((KafkaFuture.BaseFunction<String, Void>) errorString -> {
+            haltFuture.thenApply(errorString -> {
                 if (errorString == null)
                     errorString = "";
                 if (errorString.isEmpty()) {
