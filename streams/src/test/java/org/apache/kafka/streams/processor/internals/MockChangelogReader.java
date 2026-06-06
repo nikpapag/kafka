@@ -17,6 +17,7 @@
 package org.apache.kafka.streams.processor.internals;
 
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.streams.processor.StandbyUpdateListener.SuspendReason;
 import org.apache.kafka.streams.processor.TaskId;
 
 import java.util.Collection;
@@ -27,7 +28,7 @@ import java.util.Set;
 
 public class MockChangelogReader implements ChangelogReader {
     private final Set<TopicPartition> restoringPartitions = new HashSet<>();
-    private Map<TopicPartition, Long> restoredOffsets = Collections.emptyMap();
+    private final Map<TopicPartition, Long> restoredOffsets = Collections.emptyMap();
 
     public boolean isPartitionRegistered(final TopicPartition partition) {
         return restoringPartitions.contains(partition);
@@ -46,8 +47,9 @@ public class MockChangelogReader implements ChangelogReader {
     }
 
     @Override
-    public void restore(final Map<TaskId, Task> tasks) {
+    public long restore(final Map<TaskId, Task> tasks) {
         // do nothing
+        return 0L;
     }
 
     @Override
@@ -58,6 +60,11 @@ public class MockChangelogReader implements ChangelogReader {
     @Override
     public void transitToUpdateStandby() {
         // do nothing
+    }
+
+    @Override
+    public boolean isRestoringActive() {
+        return true;
     }
 
     @Override
@@ -83,6 +90,12 @@ public class MockChangelogReader implements ChangelogReader {
         for (final TopicPartition partition : partitions) {
             restoredOffsets.remove(partition);
         }
+    }
+
+    @Override
+    public void unregister(final Collection<TopicPartition> partitions,
+                           final SuspendReason reason) {
+        unregister(partitions);
     }
 
     @Override

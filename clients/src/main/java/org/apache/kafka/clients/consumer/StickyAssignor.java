@@ -16,13 +16,6 @@
  */
 package org.apache.kafka.clients.consumer;
 
-import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 import org.apache.kafka.clients.consumer.internals.AbstractStickyAssignor;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.types.ArrayOf;
@@ -30,7 +23,15 @@ import org.apache.kafka.common.protocol.types.Field;
 import org.apache.kafka.common.protocol.types.Schema;
 import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.protocol.types.Type;
-import org.apache.kafka.common.utils.CollectionUtils;
+
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * <p>The sticky assignor serves two purposes. First, it guarantees an assignment that is as balanced as possible, meaning either:
@@ -216,9 +217,11 @@ public class StickyAssignor extends AbstractStickyAssignor {
 
     @Override
     protected MemberData memberData(Subscription subscription) {
+        // Always deserialize ownedPartitions and generation id from user data
+        // since StickyAssignor is an eager rebalance protocol that will revoke all existing partitions before joining group
         ByteBuffer userData = subscription.userData();
         if (userData == null || !userData.hasRemaining()) {
-            return new MemberData(Collections.emptyList(), Optional.empty());
+            return new MemberData(Collections.emptyList(), Optional.empty(), subscription.rackId());
         }
         return deserializeTopicPartitionAssignment(userData);
     }
@@ -227,15 +230,18 @@ public class StickyAssignor extends AbstractStickyAssignor {
     static ByteBuffer serializeTopicPartitionAssignment(MemberData memberData) {
         Struct struct = new Struct(STICKY_ASSIGNOR_USER_DATA_V1);
         List<Struct> topicAssignments = new ArrayList<>();
-        for (Map.Entry<String, List<Integer>> topicEntry : CollectionUtils.groupPartitionsByTopic(memberData.partitions).entrySet()) {
+        var partitionsByTopic = new HashMap<String, List<Integer>>();
+        for (TopicPartition tp : memberData.partitions) {
+            partitionsByTopic.computeIfAbsent(tp.topic(), t -> new ArrayList<>()).add(tp.partition());
+        }
+        for (Map.Entry<String, List<Integer>> topicEntry : partitionsByTopic.entrySet()) {
             Struct topicAssignment = new Struct(TOPIC_ASSIGNMENT);
             topicAssignment.set(TOPIC_KEY_NAME, topicEntry.getKey());
             topicAssignment.set(PARTITIONS_KEY_NAME, topicEntry.getValue().toArray());
             topicAssignments.add(topicAssignment);
         }
         struct.set(TOPIC_PARTITIONS_KEY_NAME, topicAssignments.toArray());
-        if (memberData.generation.isPresent())
-            struct.set(GENERATION_KEY_NAME, memberData.generation.get());
+        memberData.generation.ifPresent(integer -> struct.set(GENERATION_KEY_NAME, integer));
         ByteBuffer buffer = ByteBuffer.allocate(STICKY_ASSIGNOR_USER_DATA_V1.sizeOf(struct));
         STICKY_ASSIGNOR_USER_DATA_V1.write(buffer, struct);
         buffer.flip();
@@ -270,4 +276,5 @@ public class StickyAssignor extends AbstractStickyAssignor {
         Optional<Integer> generation = struct.hasField(GENERATION_KEY_NAME) ? Optional.of(struct.getInt(GENERATION_KEY_NAME)) : Optional.empty();
         return new MemberData(partitions, generation);
     }
+
 }
