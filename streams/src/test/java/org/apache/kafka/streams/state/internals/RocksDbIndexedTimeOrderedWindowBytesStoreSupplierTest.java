@@ -18,16 +18,17 @@ package org.apache.kafka.streams.state.internals;
 
 import org.apache.kafka.streams.processor.StateStore;
 import org.apache.kafka.streams.state.WindowStore;
-import org.junit.Test;
+
+import org.junit.jupiter.api.Test;
 
 import static java.time.Duration.ZERO;
 import static java.time.Duration.ofMillis;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsInstanceOf.instanceOf;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertThrows;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class RocksDbIndexedTimeOrderedWindowBytesStoreSupplierTest {
 
@@ -57,19 +58,28 @@ public class RocksDbIndexedTimeOrderedWindowBytesStoreSupplierTest {
 
     @Test
     public void shouldCreateRocksDbTimeOrderedWindowStoreWithIndex() {
-        final WindowStore store = RocksDbIndexedTimeOrderedWindowBytesStoreSupplier.create("store", ofMillis(1L), ofMillis(1L), false, true).get();
-        final StateStore wrapped = ((WrappedStateStore) store).wrapped();
+        final WindowStore<?, ?> store = RocksDbIndexedTimeOrderedWindowBytesStoreSupplier.create("store", ofMillis(1L), ofMillis(1L), false, true).get();
+        final StateStore wrapped = ((WrappedStateStore<?, ?, ?>) store).wrapped();
         assertThat(store, instanceOf(RocksDBTimeOrderedWindowStore.class));
         assertThat(wrapped, instanceOf(RocksDBTimeOrderedWindowSegmentedBytesStore.class));
-        assertTrue(((RocksDBTimeOrderedWindowSegmentedBytesStore) wrapped).hasIndex());
+        assertTrue(((RocksDBTimeOrderedWindowSegmentedBytesStore<?>) wrapped).hasIndex());
     }
 
     @Test
     public void shouldCreateRocksDbTimeOrderedWindowStoreWithoutIndex() {
-        final WindowStore store = RocksDbIndexedTimeOrderedWindowBytesStoreSupplier.create("store", ofMillis(1L), ofMillis(1L), false, false).get();
-        final StateStore wrapped = ((WrappedStateStore) store).wrapped();
+        final WindowStore<?, ?> store = RocksDbIndexedTimeOrderedWindowBytesStoreSupplier.create("store", ofMillis(1L), ofMillis(1L), false, false).get();
+        final StateStore wrapped = ((WrappedStateStore<?, ?, ?>) store).wrapped();
         assertThat(store, instanceOf(RocksDBTimeOrderedWindowStore.class));
         assertThat(wrapped, instanceOf(RocksDBTimeOrderedWindowSegmentedBytesStore.class));
-        assertFalse(((RocksDBTimeOrderedWindowSegmentedBytesStore) wrapped).hasIndex());
+        assertFalse(((RocksDBTimeOrderedWindowSegmentedBytesStore<?>) wrapped).hasIndex());
+    }
+
+    @Test
+    public void shouldCreateRocksDbTimeOrderedWindowStoreWithHeaders() {
+        final WindowStore<?, ?> store = RocksDbIndexedTimeOrderedWindowBytesStoreWithHeadersSupplier.create("store", ofMillis(1L), ofMillis(1L), false, true).get();
+        final StateStore wrapped = ((WrappedStateStore<?, ?, ?>) store).wrapped();
+        assertThat(store, instanceOf(RocksDBTimeOrderedWindowStoreWithHeaders.class));
+        assertThat(wrapped, instanceOf(RocksDBTimeOrderedWindowSegmentedBytesStore.class));
+        assertTrue(((RocksDBTimeOrderedWindowSegmentedBytesStore<?>) wrapped).hasIndex());
     }
 }

@@ -24,18 +24,24 @@ import org.apache.kafka.common.serialization.IntegerDeserializer;
 import org.apache.kafka.common.serialization.IntegerSerializer;
 import org.apache.kafka.common.serialization.LongSerializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
-import org.apache.kafka.common.utils.LogContext;
-import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.common.utils.internals.LogContext;
+import org.apache.kafka.streams.errors.ErrorHandlerContext;
 import org.apache.kafka.streams.errors.LogAndContinueExceptionHandler;
 import org.apache.kafka.streams.errors.LogAndFailExceptionHandler;
+import org.apache.kafka.streams.errors.ProcessingExceptionHandler;
 import org.apache.kafka.streams.errors.StreamsException;
+import org.apache.kafka.streams.processor.api.Processor;
+import org.apache.kafka.streams.processor.api.ProcessorContext;
+import org.apache.kafka.streams.processor.api.Record;
 import org.apache.kafka.test.GlobalStateManagerStub;
 import org.apache.kafka.test.MockProcessorNode;
 import org.apache.kafka.test.MockSourceNode;
 import org.apache.kafka.test.NoOpProcessorContext;
 import org.apache.kafka.test.TestUtils;
-import org.junit.Before;
-import org.junit.Test;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.util.Collections;
@@ -43,15 +49,15 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.util.Arrays.asList;
 import static org.apache.kafka.streams.processor.internals.testutil.ConsumerRecordUtil.record;
-import static org.hamcrest.CoreMatchers.equalTo;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class GlobalStateTaskTest {
 
@@ -67,20 +73,39 @@ public class GlobalStateTaskTest {
     private final MockSourceNode<Integer, Integer>  sourceTwo = new MockSourceNode<>(
         new IntegerDeserializer(),
         new IntegerDeserializer());
+    private final MockSourceNode<String, String> sourceForward = new MockSourceNode<>(new StringDeserializer(), new StringDeserializer()) {
+
+        private InternalProcessorContext<String, String> ctx;
+        @Override
+        public void init(final InternalProcessorContext<String, String> context) {
+            this.ctx = context;
+            super.init(context);  // Parent stores it too (but we can't access)
+        }
+
+        @Override
+        public void process(final Record<String, String> record) {
+            super.process(record);   // Track in MockSourceNode
+            ctx.forward(record);      // Forward using local copy
+        }
+    };
     private final MockProcessorNode<?, ?, ?, ?> processorOne = new MockProcessorNode<>();
     private final MockProcessorNode<?, ?, ?, ?> processorTwo = new MockProcessorNode<>();
 
     private final Map<TopicPartition, Long> offsets = new HashMap<>();
-    private File testDirectory = TestUtils.tempDirectory("global-store");
+    private final File testDirectory = TestUtils.tempDirectory("global-store");
     private final NoOpProcessorContext context = new NoOpProcessorContext();
+    private final MockTime time = new MockTime();
+    private final long flushInterval = 1000L;
+    private final long currentOffsetT1 = 50;
+    private final long currentOffsetT2 = 100;
 
     private ProcessorTopology topology;
     private GlobalStateManagerStub stateMgr;
     private GlobalStateUpdateTask globalStateTask;
 
-    @Before
+    @BeforeEach
     public void before() {
-        final Set<String> storeNames = Utils.mkSet("t1-store", "t2-store");
+        final Set<String> storeNames = Set.of("t1-store", "t2-store");
         final Map<String, SourceNode<?, ?>> sourceByTopics = new HashMap<>();
         sourceByTopics.put(topic1, sourceOne);
         sourceByTopics.put(topic2, sourceTwo);
@@ -101,7 +126,10 @@ public class GlobalStateTaskTest {
             topology,
             context,
             stateMgr,
-            new LogAndFailExceptionHandler()
+            new LogAndFailExceptionHandler(),
+            null,
+            time,
+            flushInterval
         );
     }
 
@@ -188,7 +216,10 @@ public class GlobalStateTaskTest {
             topology,
             context,
             stateMgr,
-            new LogAndContinueExceptionHandler()
+            new LogAndContinueExceptionHandler(),
+            null,
+            time,
+            flushInterval
         );
         final byte[] key = new LongSerializer().serialize(topic2, 1L);
         final byte[] recordValue = new IntegerSerializer().serialize(topic2, 10);
@@ -203,7 +234,10 @@ public class GlobalStateTaskTest {
             topology,
             context,
             stateMgr,
-            new LogAndContinueExceptionHandler()
+            new LogAndContinueExceptionHandler(),
+            null,
+            time,
+            flushInterval
         );
         final byte[] key = new IntegerSerializer().serialize(topic2, 1);
         final byte[] recordValue = new LongSerializer().serialize(topic2, 10L);
@@ -213,31 +247,233 @@ public class GlobalStateTaskTest {
 
 
     @Test
-    public void shouldFlushStateManagerWithOffsets() {
+    public void shouldCommitStateManagerWithOffsets() {
         final Map<TopicPartition, Long> expectedOffsets = new HashMap<>();
         expectedOffsets.put(t1, 52L);
         expectedOffsets.put(t2, 100L);
+
         globalStateTask.initialize();
-        globalStateTask.update(record(topic1, 1, 51, "foo".getBytes(), "foo".getBytes()));
+        globalStateTask.update(record(topic1, 1, currentOffsetT1 + 1, "foo".getBytes(), "foo".getBytes()));
         globalStateTask.flushState();
+
         assertEquals(expectedOffsets, stateMgr.changelogOffsets());
+        assertTrue(stateMgr.committed);
     }
 
     @Test
-    public void shouldCheckpointOffsetsWhenStateIsFlushed() {
+    public void shouldCommitOffsetsWhenStateIsFlushed() {
         final Map<TopicPartition, Long> expectedOffsets = new HashMap<>();
         expectedOffsets.put(t1, 102L);
         expectedOffsets.put(t2, 100L);
+
         globalStateTask.initialize();
-        globalStateTask.update(record(topic1, 1, 101, "foo".getBytes(), "foo".getBytes()));
+        globalStateTask.update(record(topic1, 1, currentOffsetT1 + 51L, "foo".getBytes(), "foo".getBytes()));
         globalStateTask.flushState();
-        assertThat(stateMgr.changelogOffsets(), equalTo(expectedOffsets));
+
+        assertEquals(expectedOffsets, stateMgr.changelogOffsets());
+        assertTrue(stateMgr.committed);
     }
+
+    @Test
+    public void shouldNotCommitIfNotReceivedEnoughRecords() {
+        globalStateTask.initialize();
+        globalStateTask.update(record(topic1, 1, currentOffsetT1 + 9000L, "foo".getBytes(), "foo".getBytes()));
+        time.sleep(flushInterval); // flush interval elapsed
+
+        stateMgr.committed = false;
+
+        globalStateTask.maybeCheckpoint();
+
+        assertEquals(offsets, stateMgr.changelogOffsets());
+        assertFalse(stateMgr.committed);
+    }
+
+    @Test
+    public void shouldNotCommitWhenCommitIntervalHasNotLapsed() {
+        globalStateTask.initialize();
+
+        // offset delta exceeded
+        globalStateTask.update(record(topic1, 1, currentOffsetT1 + 10000L, "foo".getBytes(), "foo".getBytes()));
+
+        time.sleep(flushInterval / 2);
+
+        stateMgr.committed = false;
+
+        globalStateTask.maybeCheckpoint();
+
+        assertEquals(offsets, stateMgr.changelogOffsets());
+        assertFalse(stateMgr.committed);
+    }
+
+    @Test
+    public void shouldCommitIfReceivedEnoughRecordsAndCommitIntervalHasElapsed() {
+        final Map<TopicPartition, Long> expectedOffsets = new HashMap<>();
+        expectedOffsets.put(t1, 10051L); // topic1 advanced with 10001 records
+        expectedOffsets.put(t2, 100L);
+
+        globalStateTask.initialize();
+
+        time.sleep(flushInterval); // flush interval elapsed
+
+        // 10000 records received since last flush => do not flush
+        globalStateTask.update(record(topic1, 1, currentOffsetT1 + 9999L, "foo".getBytes(), "foo".getBytes()));
+
+        stateMgr.committed = false;
+
+        globalStateTask.maybeCheckpoint();
+
+        assertEquals(offsets, stateMgr.changelogOffsets());
+        assertFalse(stateMgr.committed);
+
+        // 1 more record received => triggers the flush
+        globalStateTask.update(record(topic1, 1, currentOffsetT1 + 10000L, "foo".getBytes(), "foo".getBytes()));
+        globalStateTask.maybeCheckpoint();
+
+        assertEquals(expectedOffsets, stateMgr.changelogOffsets());
+        assertTrue(stateMgr.committed);
+    }
+
+    @Test
+    public void shouldCommitIfReceivedEnoughRecordsFromMultipleTopicsAndCommitIntervalElapsed() {
+        final byte[] integerBytes = new IntegerSerializer().serialize(topic2, 1);
+
+        final Map<TopicPartition, Long> expectedOffsets = new HashMap<>();
+        expectedOffsets.put(t1, 9050L); // topic1 advanced with 9000 records
+        expectedOffsets.put(t2, 1101L); // topic2 advanced with 1001 records
+
+        globalStateTask.initialize();
+
+        time.sleep(flushInterval);
+
+        // received 9000 records in topic1
+        globalStateTask.update(record(topic1, 1, currentOffsetT1 + 8999L, "foo".getBytes(), "foo".getBytes()));
+        // received 1001 records in topic2
+        globalStateTask.update(record(topic2, 1, currentOffsetT2 + 1000L, integerBytes, integerBytes));
+        globalStateTask.maybeCheckpoint();
+
+        assertEquals(expectedOffsets, stateMgr.changelogOffsets());
+        assertTrue(stateMgr.committed);
+    }
+
 
     @Test
     public void shouldWipeGlobalStateDirectory() throws Exception {
         assertTrue(stateMgr.baseDir().exists());
         globalStateTask.close(true);
         assertFalse(stateMgr.baseDir().exists());
+    }
+
+    @Test
+    public void shouldCommitDuringInitialization() {
+        globalStateTask.initialize();
+
+        assertTrue(stateMgr.committed);
+    }
+
+    @Test
+    public void shouldCommitDuringClose() throws Exception {
+        globalStateTask.initialize();
+
+        stateMgr.committed = false;
+
+        globalStateTask.close(false);
+
+        assertTrue(stateMgr.committed);
+    }
+
+    private Processor<String, String, Void, Void> createThrowingProcessor() {
+        return new Processor<>() {
+            @Override
+            public void init(final ProcessorContext<Void, Void> context) {}
+
+            @Override
+            public void process(final Record<String, String> record) {
+                throw new RuntimeException("Test processing exception");
+            }
+        };
+    }
+
+    private NoOpProcessorContext createForwardingContext() {
+        return new NoOpProcessorContext() {
+            @Override
+            public <K, V> void forward(final Record<K, V> record) {
+                final ProcessorNode<?, ?, ?, ?> previousNode = currentNode();
+                try {
+                    for (final ProcessorNode<?, ?, ?, ?> child : currentNode().children()) {
+                        setCurrentNode(child);
+                        ((ProcessorNode<K, V, ?, ?>) child).process(record);
+                    }
+                } finally {
+                    setCurrentNode(previousNode);
+                }
+            }
+        };
+    }
+
+    private void setupTopologyWithThrowingProcessor(final Processor<String, String, Void, Void> processor) {
+        final ProcessorNode<String, String, Void, Void> failedProcessorNode =
+                new ProcessorNode<>("failing-processor", processor, Collections.emptySet());
+        final Map<String, SourceNode<?, ?>> sourceByTopics = Map.of(topic1, sourceForward);
+        sourceForward.addChild(failedProcessorNode);
+        topology = ProcessorTopologyFactories.with(asList(sourceForward, failedProcessorNode), sourceByTopics, Collections.emptyList(), Map.of("t1-store", topic1));
+    }
+
+    @Test
+    public void shouldInvokeProcessExceptionHandlerWhenEnabled() {
+        final AtomicBoolean handlerInvoked = new AtomicBoolean(false);
+        final ProcessingExceptionHandler exceptionHandler = new ProcessingExceptionHandler() {
+            @Override
+            public void configure(final Map<String, ?> configs) {
+
+            }
+            @Override
+            public Response handleError(final ErrorHandlerContext context, final Record<?, ?> record, final Exception exception) {
+                handlerInvoked.set(true);
+                assertEquals("Test processing exception", exception.getMessage());
+                return Response.resume();
+
+            }
+        };
+
+        setupTopologyWithThrowingProcessor(createThrowingProcessor());
+        final NoOpProcessorContext testContext = createForwardingContext();
+
+        globalStateTask = new GlobalStateUpdateTask(
+                logContext,
+                topology,
+                testContext,
+                stateMgr,
+                new LogAndContinueExceptionHandler(),
+                exceptionHandler,
+                time,
+                flushInterval
+        );
+        globalStateTask.initialize();
+        globalStateTask.update(record(topic1, 1, 1, "foo".getBytes(), "bar".getBytes()));
+        assertTrue(handlerInvoked.get());
+        assertEquals(1, sourceForward.numReceived);
+
+    }
+
+    @Test
+    public void shouldPropagateExceptionWhenHandlerDisabled() {
+        setupTopologyWithThrowingProcessor(createThrowingProcessor());
+        final NoOpProcessorContext testContext = createForwardingContext();
+
+        globalStateTask = new GlobalStateUpdateTask(
+                logContext,
+                topology,
+                testContext,
+                stateMgr,
+                new LogAndContinueExceptionHandler(),
+                null,
+                time,
+                flushInterval
+        );
+        globalStateTask.initialize();
+        final RuntimeException exception = assertThrows(RuntimeException.class,
+                () -> globalStateTask.update(record(topic1, 1, 1, "foo".getBytes(), "bar".getBytes())));
+        assertEquals("Test processing exception", exception.getMessage());
+        assertEquals(1, sourceForward.numReceived);
     }
 }

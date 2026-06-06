@@ -17,6 +17,7 @@
 package org.apache.kafka.connect.transforms;
 
 import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.utils.internals.AppInfoParser;
 import org.apache.kafka.connect.connector.ConnectRecord;
 import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.transforms.util.SimpleConfig;
@@ -53,6 +54,11 @@ public class TimestampRouter<R extends ConnectRecord<R>> implements Transformati
 
     private String topicFormat;
     private ThreadLocal<SimpleDateFormat> timestampFormat;
+
+    @Override
+    public String version() {
+        return AppInfoParser.getVersion();
+    }
 
     @Override
     public void configure(Map<String, ?> props) {
