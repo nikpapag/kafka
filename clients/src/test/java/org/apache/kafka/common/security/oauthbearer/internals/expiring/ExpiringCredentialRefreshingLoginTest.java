@@ -16,12 +16,17 @@
  */
 package org.apache.kafka.common.security.oauthbearer.internals.expiring;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.config.SaslConfigs;
+import org.apache.kafka.common.internals.KafkaFutureImpl;
+import org.apache.kafka.common.security.oauthbearer.internals.expiring.ExpiringCredentialRefreshingLogin.LoginContextFactory;
+import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.common.utils.Time;
+
+import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
+import org.mockito.Mockito;
+import org.mockito.internal.util.MockUtil;
 
 import java.util.ArrayList;
 import java.util.Date;
@@ -29,6 +34,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
@@ -38,17 +44,12 @@ import javax.security.auth.login.Configuration;
 import javax.security.auth.login.LoginContext;
 import javax.security.auth.login.LoginException;
 
-import org.apache.kafka.common.config.ConfigDef;
-import org.apache.kafka.common.config.SaslConfigs;
-import org.apache.kafka.common.internals.KafkaFutureImpl;
-import org.apache.kafka.common.security.oauthbearer.internals.expiring.ExpiringCredentialRefreshingLogin.LoginContextFactory;
-import org.apache.kafka.common.utils.MockScheduler;
-import org.apache.kafka.common.utils.MockTime;
-import org.apache.kafka.common.utils.Time;
-import org.junit.jupiter.api.Test;
-import org.mockito.InOrder;
-import org.mockito.Mockito;
-import org.mockito.internal.util.MockUtil;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class ExpiringCredentialRefreshingLoginTest {
     private static final Configuration EMPTY_WILDCARD_CONFIGURATION;
@@ -283,6 +284,40 @@ public class ExpiringCredentialRefreshingLoginTest {
         }
     }
 
+    /*
+    * */
+    private static class MockScheduler implements MockTime.Listener {
+
+        private final MockTime time;
+        private final Map<Long, List<KafkaFutureImpl<Long>>> waiters = new TreeMap<>();
+
+        public MockScheduler(MockTime time) {
+            this.time = time;
+            time.addListener(this);
+        }
+
+        @Override
+        public synchronized void onTimeUpdated() {
+            long timeMs = time.milliseconds();
+            var iterator = waiters.entrySet().iterator();
+            while (iterator.hasNext()) {
+                var entry = iterator.next();
+                if (entry.getKey() > timeMs) break;
+                entry.getValue().forEach(future -> future.complete(timeMs));
+                iterator.remove();
+            }
+        }
+
+        public synchronized void addWaiter(long delayMs, KafkaFutureImpl<Long> waiter) {
+            long timeMs = time.milliseconds();
+            if (delayMs <= 0) {
+                waiter.complete(timeMs);
+            } else {
+                waiters.computeIfAbsent(timeMs + delayMs, k -> new ArrayList<>()).add(waiter);
+            }
+        }
+    }
+
     @Test
     public void testRefresh() throws Exception {
         for (int numExpectedRefreshes : new int[] {0, 1, 2}) {
@@ -347,7 +382,7 @@ public class ExpiringCredentialRefreshingLoginTest {
                 for (int i = 0; i < numExpectedRefreshes; ++i) {
                     KafkaFutureImpl<Long> waiter = waiters.get(i);
                     assertTrue(waiter.isDone());
-                    assertEquals((i + 1) * 1000 * 60 * refreshEveryMinutes, waiter.get().longValue() - startMs);
+                    assertEquals((i + 1) * 1000 * 60 * refreshEveryMinutes, waiter.get() - startMs);
                 }
                 assertFalse(waiters.get(numExpectedRefreshes).isDone());
 
@@ -438,7 +473,7 @@ public class ExpiringCredentialRefreshingLoginTest {
         for (int i = 0; i < numExpectedRefreshes; ++i) {
             KafkaFutureImpl<Long> waiter = waiters.get(i);
             assertTrue(waiter.isDone());
-            assertEquals((i + 1) * 1000 * 60 * refreshEveryMinutes, waiter.get().longValue() - startMs);
+            assertEquals((i + 1) * 1000 * 60 * refreshEveryMinutes, waiter.get() - startMs);
         }
         assertFalse(waiters.get(numExpectedRefreshes).isDone());
 
@@ -522,7 +557,7 @@ public class ExpiringCredentialRefreshingLoginTest {
         for (int i = 0; i < numExpectedRefreshes; ++i) {
             KafkaFutureImpl<Long> waiter = waiters.get(i);
             assertTrue(waiter.isDone());
-            assertEquals((i + 1) * 1000 * 60 * refreshEveryMinutes, waiter.get().longValue() - startMs);
+            assertEquals((i + 1) * 1000 * 60 * refreshEveryMinutes, waiter.get() - startMs);
         }
         assertFalse(waiters.get(numExpectedRefreshes).isDone());
 
@@ -603,7 +638,7 @@ public class ExpiringCredentialRefreshingLoginTest {
             KafkaFutureImpl<Long> waiter = waiters.get(i);
             assertTrue(waiter.isDone());
             assertEquals((i + 1) * 1000 * (60 * refreshEveryMinutes + bufferIntrusionSeconds),
-                    waiter.get().longValue() - startMs);
+                    waiter.get() - startMs);
         }
         assertFalse(waiters.get(numExpectedRefreshes).isDone());
 
@@ -683,7 +718,7 @@ public class ExpiringCredentialRefreshingLoginTest {
             KafkaFutureImpl<Long> waiter = waiters.get(i);
             assertTrue(waiter.isDone());
             assertEquals((i + 1) * 1000 * (60 * refreshEveryMinutes - bufferIntrusionSeconds),
-                    waiter.get().longValue() - startMs);
+                    waiter.get() - startMs);
         }
         assertFalse(waiters.get(numExpectedRefreshes).isDone());
 
@@ -753,7 +788,7 @@ public class ExpiringCredentialRefreshingLoginTest {
             int numWaiters) {
         List<KafkaFutureImpl<Long>> retvalWaiters = new ArrayList<>(numWaiters);
         for (int i = 1; i <= numWaiters; ++i) {
-            KafkaFutureImpl<Long> waiter = new KafkaFutureImpl<Long>();
+            KafkaFutureImpl<Long> waiter = new KafkaFutureImpl<>();
             mockScheduler.addWaiter(i * refreshEveryMillis, waiter);
             retvalWaiters.add(waiter);
         }

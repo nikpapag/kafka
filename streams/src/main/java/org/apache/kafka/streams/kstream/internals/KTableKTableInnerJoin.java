@@ -16,8 +16,8 @@
  */
 package org.apache.kafka.streams.kstream.internals;
 
+import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.apache.kafka.common.metrics.Sensor;
-import org.apache.kafka.streams.kstream.KeyValueMapper;
 import org.apache.kafka.streams.kstream.ValueJoiner;
 import org.apache.kafka.streams.processor.api.ContextualProcessor;
 import org.apache.kafka.streams.processor.api.Processor;
@@ -25,17 +25,16 @@ import org.apache.kafka.streams.processor.api.ProcessorContext;
 import org.apache.kafka.streams.processor.api.Record;
 import org.apache.kafka.streams.processor.api.RecordMetadata;
 import org.apache.kafka.streams.processor.internals.metrics.StreamsMetricsImpl;
-import org.apache.kafka.streams.state.ValueAndTimestamp;
+import org.apache.kafka.streams.state.ValueTimestampHeaders;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import static org.apache.kafka.streams.processor.internals.metrics.TaskMetrics.droppedRecordsSensor;
-import static org.apache.kafka.streams.state.ValueAndTimestamp.getValueOrNull;
+import static org.apache.kafka.streams.state.ValueTimestampHeaders.getValueOrNull;
 
 class KTableKTableInnerJoin<K, V1, V2, VOut> extends KTableKTableAbstractJoin<K, V1, V2, VOut> {
     private static final Logger LOG = LoggerFactory.getLogger(KTableKTableInnerJoin.class);
-
-    private final KeyValueMapper<K, V1, K> keyValueMapper = (key, value) -> key;
 
     KTableKTableInnerJoin(final KTableImpl<K, ?, V1> table1,
                           final KTableImpl<K, ?, V2> table2,
@@ -105,17 +104,24 @@ class KTableKTableInnerJoin<K, V1, V2, VOut> extends KTableKTableAbstractJoin<K,
                 return;
             }
 
+            // drop out-of-order records from versioned tables (cf. KIP-914)
+            if (useVersionedSemantics && !record.value().isLatest) {
+                LOG.info("Skipping out-of-order record from versioned table while performing table-table join.");
+                droppedRecordsSensor.record();
+                return;
+            }
+
             VOut newValue = null;
             final long resultTimestamp;
             VOut oldValue = null;
 
-            final ValueAndTimestamp<V2> valueAndTimestampRight = valueGetter.get(record.key());
-            final V2 valueRight = getValueOrNull(valueAndTimestampRight);
+            final ValueTimestampHeaders<V2> valueTimestampHeadersRight = valueGetter.get(record.key());
+            final V2 valueRight = getValueOrNull(valueTimestampHeadersRight);
             if (valueRight == null) {
                 return;
             }
 
-            resultTimestamp = Math.max(record.timestamp(), valueAndTimestampRight.timestamp());
+            resultTimestamp = Math.max(record.timestamp(), valueTimestampHeadersRight.timestamp());
 
             if (record.value().newValue != null) {
                 newValue = joiner.apply(record.value().newValue, valueRight);
@@ -125,7 +131,7 @@ class KTableKTableInnerJoin<K, V1, V2, VOut> extends KTableKTableAbstractJoin<K,
                 oldValue = joiner.apply(record.value().oldValue, valueRight);
             }
 
-            context().forward(record.withValue(new Change<>(newValue, oldValue)).withTimestamp(resultTimestamp));
+            context().forward(record.withValue(new Change<>(newValue, oldValue, record.value().isLatest)).withTimestamp(resultTimestamp));
         }
 
         @Override
@@ -152,24 +158,33 @@ class KTableKTableInnerJoin<K, V1, V2, VOut> extends KTableKTableAbstractJoin<K,
         }
 
         @Override
-        public ValueAndTimestamp<VOut> get(final K key) {
-            final ValueAndTimestamp<V1> valueAndTimestamp1 = valueGetter1.get(key);
-            final V1 value1 = getValueOrNull(valueAndTimestamp1);
+        public ValueTimestampHeaders<VOut> get(final K key) {
+            final ValueTimestampHeaders<V1> valueTimestampHeader1 = valueGetter1.get(key);
+            final V1 value1 = getValueOrNull(valueTimestampHeader1);
 
             if (value1 != null) {
-                final ValueAndTimestamp<V2> valueAndTimestamp2 = valueGetter2.get(keyValueMapper.apply(key, value1));
-                final V2 value2 = getValueOrNull(valueAndTimestamp2);
+                final ValueTimestampHeaders<V2> valueTimestampHeader2 = valueGetter2.get(key);
+                final V2 value2 = getValueOrNull(valueTimestampHeader2);
 
                 if (value2 != null) {
-                    return ValueAndTimestamp.make(
+                    return ValueTimestampHeaders.make(
                         joiner.apply(value1, value2),
-                        Math.max(valueAndTimestamp1.timestamp(), valueAndTimestamp2.timestamp()));
+                        Math.max(valueTimestampHeader1.timestamp(), valueTimestampHeader2.timestamp()),
+                        new RecordHeaders());
                 } else {
                     return null;
                 }
             } else {
                 return null;
             }
+        }
+
+        @Override
+        public boolean isVersioned() {
+            // even though we can derive a proper versioned result (assuming both parent value
+            // getters are versioned), we choose not to since the output of a join of two
+            // versioned tables today is not considered versioned (cf KIP-914)
+            return false;
         }
 
         @Override

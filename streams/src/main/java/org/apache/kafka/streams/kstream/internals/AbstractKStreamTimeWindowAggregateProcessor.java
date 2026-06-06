@@ -16,21 +16,18 @@
  */
 package org.apache.kafka.streams.kstream.internals;
 
-import static org.apache.kafka.streams.StreamsConfig.InternalConfig.EMIT_INTERVAL_MS_KSTREAMS_WINDOWED_AGGREGATION;
-import static org.apache.kafka.streams.processor.internals.metrics.ProcessorNodeMetrics.emitFinalLatencySensor;
-import static org.apache.kafka.streams.processor.internals.metrics.ProcessorNodeMetrics.emittedRecordsSensor;
-import static org.apache.kafka.streams.processor.internals.metrics.TaskMetrics.droppedRecordsSensor;
-
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StreamsConfig;
+import org.apache.kafka.streams.errors.InvalidStateStoreException;
 import org.apache.kafka.streams.kstream.EmitStrategy;
 import org.apache.kafka.streams.kstream.EmitStrategy.StrategyType;
 import org.apache.kafka.streams.kstream.Window;
 import org.apache.kafka.streams.kstream.Windowed;
 import org.apache.kafka.streams.kstream.internals.KStreamImplJoin.TimeTracker;
+import org.apache.kafka.streams.processor.StateStore;
 import org.apache.kafka.streams.processor.api.ContextualProcessor;
 import org.apache.kafka.streams.processor.api.ProcessorContext;
 import org.apache.kafka.streams.processor.api.Record;
@@ -38,9 +35,16 @@ import org.apache.kafka.streams.processor.api.RecordMetadata;
 import org.apache.kafka.streams.processor.internals.InternalProcessorContext;
 import org.apache.kafka.streams.processor.internals.metrics.StreamsMetricsImpl;
 import org.apache.kafka.streams.state.KeyValueIterator;
-import org.apache.kafka.streams.state.TimestampedWindowStore;
-import org.apache.kafka.streams.state.ValueAndTimestamp;
+import org.apache.kafka.streams.state.TimestampedWindowStoreWithHeaders;
+import org.apache.kafka.streams.state.ValueTimestampHeaders;
+import org.apache.kafka.streams.state.internals.WindowedTimestampedHeadersStoreToWindowedTimestampedStoreAdapter;
+
 import org.slf4j.Logger;
+
+import static org.apache.kafka.streams.StreamsConfig.InternalConfig.EMIT_INTERVAL_MS_KSTREAMS_WINDOWED_AGGREGATION;
+import static org.apache.kafka.streams.processor.internals.metrics.ProcessorNodeMetrics.emitFinalLatencySensor;
+import static org.apache.kafka.streams.processor.internals.metrics.ProcessorNodeMetrics.emittedRecordsSensor;
+import static org.apache.kafka.streams.processor.internals.metrics.TaskMetrics.droppedRecordsSensor;
 
 public abstract class AbstractKStreamTimeWindowAggregateProcessor<KIn, VIn, VAgg> extends ContextualProcessor<KIn, VIn, Windowed<KIn>, Change<VAgg>> {
 
@@ -51,7 +55,7 @@ public abstract class AbstractKStreamTimeWindowAggregateProcessor<KIn, VIn, VAgg
     protected final TimeTracker timeTracker = new TimeTracker();
 
     private TimestampedTupleForwarder<Windowed<KIn>, VAgg> tupleForwarder;
-    protected TimestampedWindowStore<KIn, VAgg> windowStore;
+    protected TimestampedWindowStoreWithHeaders<KIn, VAgg> windowStore;
     protected Sensor droppedRecordsSensor;
     protected Sensor emittedRecordsSensor;
     protected Sensor emitFinalLatencySensor;
@@ -77,7 +81,26 @@ public abstract class AbstractKStreamTimeWindowAggregateProcessor<KIn, VIn, VAgg
         droppedRecordsSensor = droppedRecordsSensor(threadId, context.taskId().toString(), metrics);
         emittedRecordsSensor = emittedRecordsSensor(threadId, context.taskId().toString(), processorName, metrics);
         emitFinalLatencySensor = emitFinalLatencySensor(threadId, context.taskId().toString(), processorName, metrics);
-        windowStore = context.getStateStore(storeName);
+
+        boolean isHeadersStore = false;
+        // Try timestamped store
+        try {
+            windowStore = new WindowedTimestampedHeadersStoreToWindowedTimestampedStoreAdapter<>(context.getStateStore(storeName));
+        } catch (final ClassCastException swallow) {
+            // not timestamped store
+
+            // Try headers-aware timestamped store
+            try {
+                windowStore = context.getStateStore(storeName);
+                isHeadersStore = true;
+            } catch (final ClassCastException fatal) {
+                final StateStore store = context.getStateStore(storeName);
+                final String storeType = store == null ? "null" : store.getClass().getName();
+                throw new InvalidStateStoreException("Windowed-KTable state store must implement either "
+                    + "TimestampedWindowStore, or TimestampedWindowStoreWithHeaders. Got: " + storeType);
+            }
+        }
+
 
         if (emitStrategy.type() == StrategyType.ON_WINDOW_CLOSE) {
             // Restore last emit close time for ON_WINDOW_CLOSE strategy
@@ -97,7 +120,7 @@ public abstract class AbstractKStreamTimeWindowAggregateProcessor<KIn, VIn, VAgg
             tupleForwarder = new TimestampedTupleForwarder<>(
                 windowStore,
                 context,
-                new TimestampedCacheFlushListener<>(context),
+                isHeadersStore ? new TimestampedCacheFlushListenerWithHeaders<>(context) : new TimestampedCacheFlushListener<>(context),
                 sendOldValues);
         }
     }
@@ -200,31 +223,32 @@ public abstract class AbstractKStreamTimeWindowAggregateProcessor<KIn, VIn, VAgg
                               final long emitRangeUpperBound) {
         final long startMs = time.milliseconds();
 
-        final KeyValueIterator<Windowed<KIn>, ValueAndTimestamp<VAgg>> windowToEmit = windowStore
-            .fetchAll(emitRangeLowerBound, emitRangeUpperBound);
+        try (final KeyValueIterator<Windowed<KIn>, ValueTimestampHeaders<VAgg>> windowToEmit
+                 = windowStore.fetchAll(emitRangeLowerBound, emitRangeUpperBound)) {
 
-        int emittedCount = 0;
-        while (windowToEmit.hasNext()) {
-            emittedCount++;
-            final KeyValue<Windowed<KIn>, ValueAndTimestamp<VAgg>> kv = windowToEmit.next();
+            int emittedCount = 0;
+            while (windowToEmit.hasNext()) {
+                emittedCount++;
+                final KeyValue<Windowed<KIn>, ValueTimestampHeaders<VAgg>> kv = windowToEmit.next();
 
-            tupleForwarder.maybeForward(
-                record.withKey(kv.key)
-                    .withValue(new Change<>(kv.value.value(), null))
-                    .withTimestamp(kv.value.timestamp())
-                    .withHeaders(record.headers()));
+                tupleForwarder.maybeForward(
+                    record.withKey(kv.key)
+                        .withValue(new Change<>(kv.value.value(), null))
+                        .withTimestamp(kv.value.timestamp())
+                        .withHeaders(record.headers()));
+            }
+            emittedRecordsSensor.record(emittedCount);
+            emitFinalLatencySensor.record(time.milliseconds() - startMs);
         }
-        emittedRecordsSensor.record(emittedCount);
-        emitFinalLatencySensor.record(time.milliseconds() - startMs);
 
         lastEmitWindowCloseTime = windowCloseTime;
         internalProcessorContext.addProcessorMetadataKeyValue(storeName, windowCloseTime);
     }
 
     // upper and lower bound are inclusive; the bounds could be negative in which case we would skip range fetching and emitting
-    abstract protected long emitRangeLowerBound(final long windowCloseTime);
+    protected abstract long emitRangeLowerBound(final long windowCloseTime);
 
-    abstract protected long emitRangeUpperBound(final long windowCloseTime);
+    protected abstract long emitRangeUpperBound(final long windowCloseTime);
 
-    abstract protected boolean shouldRangeFetch(final long emitRangeLowerBound, final long emitRangeUpperBound);
+    protected abstract boolean shouldRangeFetch(final long emitRangeLowerBound, final long emitRangeUpperBound);
 }
