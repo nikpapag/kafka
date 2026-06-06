@@ -17,11 +17,8 @@
 
 package org.apache.kafka.streams.state.internals;
 
-import java.nio.ByteBuffer;
-import java.util.Collection;
-import java.util.Map;
-import java.util.function.BiFunction;
-import java.util.function.Function;
+import org.apache.kafka.common.header.Headers;
+import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.apache.kafka.common.serialization.Serde;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.Bytes;
@@ -36,23 +33,26 @@ import org.apache.kafka.streams.state.internals.PrefixedWindowKeySchemas.KeyFirs
 import org.apache.kafka.streams.state.internals.PrefixedWindowKeySchemas.TimeFirstWindowKeySchema;
 import org.apache.kafka.streams.state.internals.SegmentedBytesStore.KeySchema;
 import org.apache.kafka.test.KeyValueIteratorStub;
-import org.junit.Test;
 
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
+import java.util.Map;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 
 import static java.util.Arrays.asList;
 import static org.apache.kafka.common.utils.Utils.mkEntry;
 import static org.apache.kafka.common.utils.Utils.mkMap;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
-@RunWith(Parameterized.class)
 public class WindowKeySchemaTest {
 
     private static final Map<SchemaType, KeySchema> SCHEMA_TYPE_MAP = mkMap(
@@ -90,13 +90,18 @@ public class WindowKeySchemaTest {
         R apply(A a, B b, C c);
     }
 
+    @FunctionalInterface
+    interface QuadFunction<A, B, C, D, R> {
+        R apply(A a, B b, C c, D d);
+    }
+
     private static final Map<SchemaType, TriFunction<byte[], Long, Integer, Bytes>> BYTES_TO_STORE_BINARY_MAP = mkMap(
         mkEntry(SchemaType.WindowKeySchema, WindowKeySchema::toStoreKeyBinary),
         mkEntry(SchemaType.PrefixedKeyFirstSchema, KeyFirstWindowKeySchema::toStoreKeyBinary),
         mkEntry(SchemaType.PrefixedTimeFirstSchema, TimeFirstWindowKeySchema::toStoreKeyBinary)
     );
 
-    private static final Map<SchemaType, TriFunction<Windowed<String>, Integer, StateSerdes<String, byte[]>, Bytes>> SERDE_TO_STORE_BINARY_MAP = mkMap(
+    private static final Map<SchemaType, QuadFunction<Windowed<String>, Integer, Headers, StateSerdes<String, byte[]>, Bytes>> SERDE_TO_STORE_BINARY_MAP = mkMap(
         mkEntry(SchemaType.WindowKeySchema, WindowKeySchema::toStoreKeyBinary),
         mkEntry(SchemaType.PrefixedKeyFirstSchema, KeyFirstWindowKeySchema::toStoreKeyBinary),
         mkEntry(SchemaType.PrefixedTimeFirstSchema, TimeFirstWindowKeySchema::toStoreKeyBinary)
@@ -119,18 +124,19 @@ public class WindowKeySchemaTest {
         mkEntry(SchemaType.PrefixedTimeFirstSchema, TimeFirstWindowKeySchema::fromNonPrefixWindowKey)
     );
 
-    final private String key = "key";
-    final private String topic = "topic";
-    final private long startTime = 50L;
-    final private long endTime = 100L;
-    final private Serde<String> serde = Serdes.String();
+    private final String key = "key";
+    private final String topic = "topic";
+    private final long startTime = 50L;
+    private final long endTime = 100L;
+    private final Serde<String> serde = Serdes.String();
 
-    final private Window window = new TimeWindow(startTime, endTime);
-    final private Windowed<String> windowedKey = new Windowed<>(key, window);
-    final private KeySchema keySchema;
-    final private Serde<Windowed<String>> keySerde = new WindowedSerdes.TimeWindowedSerde<>(serde, Long.MAX_VALUE);
-    final private StateSerdes<String, byte[]> stateSerdes = new StateSerdes<>("dummy", serde, Serdes.ByteArray());
-    final public SchemaType schemaType;
+    private final Window window = new TimeWindow(startTime, endTime);
+    private final Windowed<String> windowedKey = new Windowed<>(key, window);
+    private KeySchema keySchema;
+    private final Serde<Windowed<String>> keySerde = new WindowedSerdes.TimeWindowedSerde<>(serde, endTime - startTime);
+    private final StateSerdes<String, byte[]> stateSerdes = new StateSerdes<>("dummy", serde, Serdes.ByteArray());
+    private final Headers headers = new RecordHeaders();
+    public SchemaType schemaType;
 
     private enum SchemaType {
         WindowKeySchema,
@@ -138,16 +144,7 @@ public class WindowKeySchemaTest {
         PrefixedKeyFirstSchema
     }
 
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return asList(new Object[][] {
-            {SchemaType.WindowKeySchema},
-            {SchemaType.PrefixedTimeFirstSchema},
-            {SchemaType.PrefixedKeyFirstSchema}
-        });
-    }
-
-    public WindowKeySchemaTest(final SchemaType type) {
+    public void setup(final SchemaType type) {
         schemaType = type;
         keySchema = SCHEMA_TYPE_MAP.get(type);
     }
@@ -180,12 +177,14 @@ public class WindowKeySchemaTest {
         return EXTRACT_SEQ_MAP.get(schemaType);
     }
 
-    private TriFunction<Windowed<String>, Integer, StateSerdes<String, byte[]>, Bytes> getSerdeToStoreKey() {
+    private QuadFunction<Windowed<String>, Integer, Headers, StateSerdes<String, byte[]>, Bytes> getSerdeToStoreKey() {
         return SERDE_TO_STORE_BINARY_MAP.get(schemaType);
     }
 
-    @Test
-    public void testHasNextConditionUsingNullKeys() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void testHasNextConditionUsingNullKeys(final SchemaType type) {
+        setup(type);
         final BiFunction<Windowed<Bytes>, Integer, Bytes> toStoreKeyBinary = getToStoreKeyBinaryWindowParam();
         final List<KeyValue<Bytes, Integer>> keys = asList(
             KeyValue.pair(toStoreKeyBinary.apply(new Windowed<>(Bytes.wrap(new byte[] {0, 0}), new TimeWindow(0, 1)), 0), 1),
@@ -205,9 +204,11 @@ public class WindowKeySchemaTest {
             assertThat(results, equalTo(asList(1, 2, 3, 4, 5, 6)));
         }
     }
-
-    @Test
-    public void testUpperBoundWithLargeTimestamps() {
+    
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void testUpperBoundWithLargeTimestamps(final SchemaType type) {
+        setup(type);
         final Bytes upper = keySchema.upperRange(Bytes.wrap(new byte[] {0xA, 0xB, 0xC}), Long.MAX_VALUE);
         final TriFunction<byte[], Long, Integer, Bytes> toStoreKeyBinary = getToStoreKeyBinaryBytesParam();
 
@@ -242,8 +243,10 @@ public class WindowKeySchemaTest {
         }
     }
 
-    @Test
-    public void testUpperBoundWithKeyBytesLargerThanFirstTimestampByte() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void testUpperBoundWithKeyBytesLargerThanFirstTimestampByte(final SchemaType type) {
+        setup(type);
         final Bytes upper = keySchema.upperRange(Bytes.wrap(new byte[] {0xA, (byte) 0x8F, (byte) 0x9F}), Long.MAX_VALUE);
         final TriFunction<byte[], Long, Integer, Bytes> toStoreKeyBinary = getToStoreKeyBinaryBytesParam();
 
@@ -268,9 +271,10 @@ public class WindowKeySchemaTest {
         }
     }
 
-
-    @Test
-    public void testUpperBoundWithKeyBytesLargerAndSmallerThanFirstTimestampByte() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void testUpperBoundWithKeyBytesLargerAndSmallerThanFirstTimestampByte(final SchemaType type) {
+        setup(type);
         final Bytes upper = keySchema.upperRange(Bytes.wrap(new byte[] {0xC, 0xC, 0x9}), 0x0AffffffffffffffL);
         final TriFunction<byte[], Long, Integer, Bytes> toStoreKeyBinary = getToStoreKeyBinaryBytesParam();
 
@@ -294,8 +298,10 @@ public class WindowKeySchemaTest {
         }
     }
 
-    @Test
-    public void testUpperBoundWithZeroTimestamp() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void testUpperBoundWithZeroTimestamp(final SchemaType type) {
+        setup(type);
         final Bytes upper = keySchema.upperRange(Bytes.wrap(new byte[] {0xA, 0xB, 0xC}), 0);
         final TriFunction<byte[], Long, Integer, Bytes> toStoreKeyBinary = getToStoreKeyBinaryBytesParam();
 
@@ -308,8 +314,10 @@ public class WindowKeySchemaTest {
         }
     }
 
-    @Test
-    public void testLowerBoundWithZeroTimestamp() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void testLowerBoundWithZeroTimestamp(final SchemaType type) {
+        setup(type);
         final Bytes lower = keySchema.lowerRange(Bytes.wrap(new byte[] {0xA, 0xB, 0xC}), 0);
         final TriFunction<byte[], Long, Integer, Bytes> toStoreKeyBinary = getToStoreKeyBinaryBytesParam();
         assertThat(
@@ -335,8 +343,10 @@ public class WindowKeySchemaTest {
         }
     }
 
-    @Test
-    public void testLowerBoundWithNonZeroTimestamp() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void testLowerBoundWithNonZeroTimestamp(final SchemaType type) {
+        setup(type);
         final Bytes lower = keySchema.lowerRange(Bytes.wrap(new byte[] {0xA, 0xB, 0xC}), 42);
         final TriFunction<byte[], Long, Integer, Bytes> toStoreKeyBinary = getToStoreKeyBinaryBytesParam();
 
@@ -363,8 +373,10 @@ public class WindowKeySchemaTest {
         }
     }
 
-    @Test
-    public void testLowerBoundMatchesTrailingZeros() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void testLowerBoundMatchesTrailingZeros(final SchemaType type) {
+        setup(type);
         final Bytes lower = keySchema.lowerRange(Bytes.wrap(new byte[] {0xA, 0xB, 0xC}), Long.MAX_VALUE - 1);
         final TriFunction<byte[], Long, Integer, Bytes> toStoreKeyBinary = getToStoreKeyBinaryBytesParam();
 
@@ -390,32 +402,40 @@ public class WindowKeySchemaTest {
         }
     }
 
-    @Test
-    public void shouldSerializeDeserialize() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void shouldSerializeDeserialize(final SchemaType type) {
+        setup(type);
         final byte[] bytes = keySerde.serializer().serialize(topic, windowedKey);
         final Windowed<String> result = keySerde.deserializer().deserialize(topic, bytes);
         // TODO: fix this part as last bits of KAFKA-4468
-        assertEquals(new Windowed<>(key, new TimeWindow(startTime, Long.MAX_VALUE)), result);
+        assertEquals(new Windowed<>(key, new TimeWindow(startTime, endTime)), result);
     }
 
-    @Test
-    public void testSerializeDeserializeOverflowWindowSize() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void testSerializeDeserializeOverflowWindowSize(final SchemaType type) {
+        setup(type);
         final byte[] bytes = keySerde.serializer().serialize(topic, windowedKey);
         final Windowed<String> result = new TimeWindowedDeserializer<>(serde.deserializer(), Long.MAX_VALUE - 1)
             .deserialize(topic, bytes);
         assertEquals(new Windowed<>(key, new TimeWindow(startTime, Long.MAX_VALUE)), result);
     }
 
-    @Test
-    public void shouldSerializeDeserializeExpectedWindowSize() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void shouldSerializeDeserializeExpectedWindowSize(final SchemaType type) {
+        setup(type);
         final byte[] bytes = keySerde.serializer().serialize(topic, windowedKey);
         final Windowed<String> result = new TimeWindowedDeserializer<>(serde.deserializer(), endTime - startTime)
             .deserialize(topic, bytes);
         assertEquals(windowedKey, result);
     }
 
-    @Test
-    public void shouldSerializeDeserializeExpectedChangelogWindowSize() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void shouldSerializeDeserializeExpectedChangelogWindowSize(final SchemaType type) {
+        setup(type);
         if (schemaType != SchemaType.WindowKeySchema) {
             // Changelog key is serialized using WindowKeySchema
             return;
@@ -438,82 +458,102 @@ public class WindowKeySchemaTest {
         assertThat(results, equalTo(asList(1L, 10L, 20L)));
     }
 
-    @Test
-    public void shouldSerializeNullToNull() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void shouldSerializeNullToNull(final SchemaType type) {
+        setup(type);
         assertNull(keySerde.serializer().serialize(topic, null));
     }
 
-    @Test
-    public void shouldDeserializeEmptyByteArrayToNull() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void shouldDeserializeEmptyByteArrayToNull(final SchemaType type) {
+        setup(type);
         assertNull(keySerde.deserializer().deserialize(topic, new byte[0]));
     }
 
-    @Test
-    public void shouldDeserializeNullToNull() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void shouldDeserializeNullToNull(final SchemaType type) {
+        setup(type);
         assertNull(keySerde.deserializer().deserialize(topic, null));
     }
 
-    @Test
-    public void shouldConvertToBinaryAndBack() {
-        final TriFunction<Windowed<String>, Integer, StateSerdes<String, byte[]>, Bytes> toStoreKeyBinary = getSerdeToStoreKey();
-        final Bytes serialized = toStoreKeyBinary.apply(windowedKey, 0, stateSerdes);
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void shouldConvertToBinaryAndBack(final SchemaType type) {
+        setup(type);
+        final QuadFunction<Windowed<String>, Integer, Headers, StateSerdes<String, byte[]>, Bytes> toStoreKeyBinary = getSerdeToStoreKey();
+        final Bytes serialized = toStoreKeyBinary.apply(windowedKey, 0, headers, stateSerdes);
         final Windowed<String> result;
         if (schemaType == SchemaType.WindowKeySchema) {
             result = WindowKeySchema.fromStoreKey(serialized.get(),
-                endTime - startTime, stateSerdes.keyDeserializer(), stateSerdes.topic());
+                endTime - startTime, stateSerdes.keyDeserializer(), headers, stateSerdes.topic());
         } else if (schemaType == SchemaType.PrefixedTimeFirstSchema) {
             result = TimeFirstWindowKeySchema.fromStoreKey(serialized.get(),
-                endTime - startTime, stateSerdes.keyDeserializer(), stateSerdes.topic());
+                endTime - startTime, stateSerdes.keyDeserializer(), headers, stateSerdes.topic());
         } else {
             result = KeyFirstWindowKeySchema.fromStoreKey(serialized.get(),
-                endTime - startTime, stateSerdes.keyDeserializer(), stateSerdes.topic());
+                endTime - startTime, stateSerdes.keyDeserializer(), headers, stateSerdes.topic());
         }
         assertEquals(windowedKey, result);
     }
 
-    @Test
-    public void shouldExtractSequenceFromBinary() {
-        final TriFunction<Windowed<String>, Integer, StateSerdes<String, byte[]>, Bytes> toStoreKeyBinary = getSerdeToStoreKey();
-        final Bytes serialized = toStoreKeyBinary.apply(windowedKey, 0, stateSerdes);
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void shouldExtractSequenceFromBinary(final SchemaType type) {
+        setup(type);
+        final QuadFunction<Windowed<String>, Integer, Headers, StateSerdes<String, byte[]>, Bytes> toStoreKeyBinary = getSerdeToStoreKey();
+        final Bytes serialized = toStoreKeyBinary.apply(windowedKey, 0, headers, stateSerdes);
         final Function<byte[], Integer> extractStoreSequence = getExtractSeqFunc();
         assertEquals(0, (int) extractStoreSequence.apply(serialized.get()));
     }
 
-    @Test
-    public void shouldExtractStartTimeFromBinary() {
-        final TriFunction<Windowed<String>, Integer, StateSerdes<String, byte[]>, Bytes> toStoreKeyBinary = getSerdeToStoreKey();
-        final Bytes serialized = toStoreKeyBinary.apply(windowedKey, 0, stateSerdes);
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void shouldExtractStartTimeFromBinary(final SchemaType type) {
+        setup(type);
+        final QuadFunction<Windowed<String>, Integer, Headers, StateSerdes<String, byte[]>, Bytes> toStoreKeyBinary = getSerdeToStoreKey();
+        final Bytes serialized = toStoreKeyBinary.apply(windowedKey, 0, headers, stateSerdes);
         final Function<byte[], Long> extractStoreTimestamp = getExtractTimestampFunc();
         assertEquals(startTime, (long) extractStoreTimestamp.apply(serialized.get()));
     }
 
-    @Test
-    public void shouldExtractWindowFromBinary() {
-        final TriFunction<Windowed<String>, Integer, StateSerdes<String, byte[]>, Bytes> toStoreKeyBinary = getSerdeToStoreKey();
-        final Bytes serialized = toStoreKeyBinary.apply(windowedKey, 0, stateSerdes);
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void shouldExtractWindowFromBinary(final SchemaType type) {
+        setup(type);
+        final QuadFunction<Windowed<String>, Integer, Headers, StateSerdes<String, byte[]>, Bytes> toStoreKeyBinary = getSerdeToStoreKey();
+        final Bytes serialized = toStoreKeyBinary.apply(windowedKey, 0, headers, stateSerdes);
         final BiFunction<byte[], Long, Window> extractStoreWindow = getExtractStoreWindow();
         assertEquals(window, extractStoreWindow.apply(serialized.get(), endTime - startTime));
     }
 
-    @Test
-    public void shouldExtractKeyBytesFromBinary() {
-        final TriFunction<Windowed<String>, Integer, StateSerdes<String, byte[]>, Bytes> toStoreKeyBinary = getSerdeToStoreKey();
-        final Bytes serialized = toStoreKeyBinary.apply(windowedKey, 0, stateSerdes);
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void shouldExtractKeyBytesFromBinary(final SchemaType type) {
+        setup(type);
+        final QuadFunction<Windowed<String>, Integer, Headers, StateSerdes<String, byte[]>, Bytes> toStoreKeyBinary = getSerdeToStoreKey();
+        final Bytes serialized = toStoreKeyBinary.apply(windowedKey, 0, headers, stateSerdes);
         final Function<byte[], byte[]> extractStoreKeyBytes = getExtractStorageKey();
         assertArrayEquals(key.getBytes(), extractStoreKeyBytes.apply(serialized.get()));
     }
 
-    @Test
-    public void shouldExtractBytesKeyFromBinary() {
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void shouldExtractBytesKeyFromBinary(final SchemaType type) {
+        setup(type);
         final Windowed<Bytes> windowedBytesKey = new Windowed<>(Bytes.wrap(key.getBytes()), window);
         final BiFunction<Windowed<Bytes>, Integer, Bytes> toStoreKeyBinary = getToStoreKeyBinaryWindowParam();
         final Bytes serialized = toStoreKeyBinary.apply(windowedBytesKey, 0);
         final BiFunction<byte[], Long, Windowed<Bytes>> fromStoreBytesKey = getFromStorageKey();
         assertEquals(windowedBytesKey, fromStoreBytesKey.apply(serialized.get(), endTime - startTime));
     }
-
-    @Test
-    public void shouldConvertFromNonPrefixWindowKey() {
+    
+    @EnumSource(SchemaType.class)
+    @ParameterizedTest
+    public void shouldConvertFromNonPrefixWindowKey(final SchemaType type) {
+        setup(type);
         final Function<byte[], byte[]> fromWindowKey = FROM_WINDOW_KEY_MAP.get(schemaType);
         final TriFunction<byte[], Long, Integer, Bytes> toStoreKeyBinary = BYTES_TO_STORE_BINARY_MAP.get(SchemaType.WindowKeySchema);
         if (fromWindowKey != null) {

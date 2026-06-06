@@ -18,14 +18,14 @@
 package kafka.server
 
 import java.util
-import java.util.Properties
-
-import kafka.log.LogConfig
 import org.apache.kafka.common.config.ConfigResource
-import org.apache.kafka.common.config.ConfigResource.Type.{BROKER, TOPIC}
+import org.apache.kafka.common.config.ConfigResource.Type.{BROKER, CLIENT_METRICS, GROUP, TOPIC}
 import org.apache.kafka.controller.ConfigurationValidator
 import org.apache.kafka.common.errors.{InvalidConfigurationException, InvalidRequestException}
 import org.apache.kafka.common.internals.Topic
+import org.apache.kafka.coordinator.group.GroupConfig
+import org.apache.kafka.server.metrics.ClientMetricsConfigs
+import org.apache.kafka.storage.internals.log.LogConfig
 
 import scala.collection.mutable
 
@@ -41,13 +41,13 @@ import scala.collection.mutable
  *
  * This validator does not handle changes to BROKER_LOGGER resources. Despite being bundled
  * in the same RPC, BROKER_LOGGER is not really a dynamic configuration in the same sense
- * as the others. It is not persisted to the metadata log (or to ZK, when we're in that mode).
+ * as the others. It is not persisted to the metadata log.
  */
-class ControllerConfigurationValidator extends ConfigurationValidator {
+class ControllerConfigurationValidator(kafkaConfig: KafkaConfig) extends ConfigurationValidator {
   private def validateTopicName(
     name: String
   ): Unit = {
-    if (name.isEmpty()) {
+    if (name.isEmpty) {
       throw new InvalidRequestException("Default topic resources are not allowed.")
     }
     Topic.validate(name)
@@ -56,7 +56,7 @@ class ControllerConfigurationValidator extends ConfigurationValidator {
   private def validateBrokerName(
     name: String
   ): Unit = {
-    if (!name.isEmpty()) {
+    if (name.nonEmpty) {
       val brokerId = try {
         Integer.valueOf(name)
       } catch {
@@ -67,6 +67,36 @@ class ControllerConfigurationValidator extends ConfigurationValidator {
         throw new InvalidRequestException("Invalid negative broker ID.")
       }
     }
+  }
+
+  private def validateGroupName(
+    name: String
+  ): Unit = {
+    if (name.isEmpty) {
+      throw new InvalidRequestException("Default group resources are not allowed.")
+    }
+  }
+
+  private def filterAndValidateNullConfigs(
+    newConfigs: util.Map[String, String],
+    resourceTypeName: String
+  ): util.HashMap[String, String] = {
+    val filteredConfigs = new util.HashMap[String, String]()
+    val nullConfigs = new mutable.ArrayBuffer[String]()
+
+    newConfigs.forEach((key, value) => {
+      if (value == null) {
+        nullConfigs += key
+      } else {
+        filteredConfigs.put(key, value)
+      }
+    })
+    if (nullConfigs.nonEmpty) {
+      throw new InvalidConfigurationException(s"Null value not supported for $resourceTypeName configs: " +
+        nullConfigs.mkString(","))
+    }
+
+    filteredConfigs
   }
 
   private def throwExceptionForUnknownResourceType(
@@ -89,26 +119,23 @@ class ControllerConfigurationValidator extends ConfigurationValidator {
 
   override def validate(
     resource: ConfigResource,
-    config: util.Map[String, String]
+    newConfigs: util.Map[String, String],
+    oldConfigs: util.Map[String, String]
   ): Unit = {
     resource.`type`() match {
       case TOPIC =>
         validateTopicName(resource.name())
-        val properties = new Properties()
-        val nullTopicConfigs = new mutable.ArrayBuffer[String]()
-        config.entrySet().forEach(e => {
-          if (e.getValue() == null) {
-            nullTopicConfigs += e.getKey()
-          } else {
-            properties.setProperty(e.getKey(), e.getValue())
-          }
-        })
-        if (nullTopicConfigs.nonEmpty) {
-          throw new InvalidConfigurationException("Null value not supported for topic configs: " +
-            nullTopicConfigs.mkString(","))
-        }
-        LogConfig.validate(properties)
+        val filteredConfigs = filterAndValidateNullConfigs(newConfigs, "topic")
+        LogConfig.validate(oldConfigs, filteredConfigs, kafkaConfig.extractLogConfigMap,
+          kafkaConfig.remoteLogManagerConfig.isRemoteStorageSystemEnabled())
       case BROKER => validateBrokerName(resource.name())
+      case CLIENT_METRICS =>
+        val filteredConfigs = filterAndValidateNullConfigs(newConfigs, "client metrics")
+        ClientMetricsConfigs.validate(resource.name(), filteredConfigs)
+      case GROUP =>
+        validateGroupName(resource.name())
+        val filteredConfigs = filterAndValidateNullConfigs(newConfigs, "group")
+        GroupConfig.validate(filteredConfigs, kafkaConfig.groupCoordinatorConfig, kafkaConfig.shareGroupConfig)
       case _ => throwExceptionForUnknownResourceType(resource)
     }
   }
